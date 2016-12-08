@@ -30,9 +30,9 @@
 
 #define TIME_STR_LEN 128
 #define AST_MODULE "salara"
-#define AST_MODULE_DESC "Salara features (transfer call, send [command, message])"
+#define AST_MODULE_DESC "Salara features (transfer call, make call, send [command, message])"
 #define DEF_DEST_NUMBER "1234"
-#define SALARA_VERSION "1.5"	//05.12.2016
+#define SALARA_VERSION 	"1.7"//08.12.2016	//"1.6"	//07.12.2016
 
 #define DEF_SALARA_CURLOPT_TIMEOUT 3
 #define MAX_ANSWER_LEN 1024
@@ -43,6 +43,8 @@
 
 /*#define CALL_PARA_LEN (AST_MAX_EXTENSION*2)+32*/
 
+#define SIZE_OF_RESP 64
+
 //------------------------------------------------------------------------
 
 ASTERISK_FILE_VERSION(__FILE__, "$Revision: $");
@@ -52,12 +54,12 @@ enum bool {
     false = 0,
     true = 1
 };
-
+/*
 typedef struct {
     int id;
     int status;
 } s_status;
-
+*/
 
 typedef struct {
     char *body;
@@ -80,13 +82,33 @@ typedef struct {
     unsigned int counter;
 } s_route_hdr;
 
+//------------------  for MakeAction  -----------------------
+typedef struct {
+    unsigned int id;
+    int status;
+    char resp[SIZE_OF_RESP];
+} s_act;
+
+typedef struct act_rec {
+    struct act_rec * before;
+    struct act_rec * next;
+    s_act *act;
+} s_act_list;
+
+typedef struct {
+    struct act_rec *first;
+    struct act_rec *end;
+    unsigned int counter;
+} s_act_hdr;
 //------------------------------------------------------------------------
+static s_act_hdr act_hdr = {NULL,NULL,0};
+
 static int reload=0;
 //static char call_para[CALL_PARA_LEN];
 static unsigned char console = 0;
 
-static s_status evt_status = {-1, -1};
-static int action_id = -1;
+//static s_status evt_status = {-1, -1};
+//static int action_id = -1;
 
 static int salara_atexit_registered = 0;
 static int salara_cli_registered = 0;
@@ -148,6 +170,255 @@ int check_delay_sec(unsigned int t)
     if ((unsigned int)time(NULL) >= t)  return 1; else return 0;
 }
 *********************************************************************************/
+
+//------------------------------------------------------------------------
+static int delete_act(s_act_list *arcd, int withlock)
+{
+int ret=-1, lg;
+s_act_list *bf=NULL, *nx=NULL;
+
+    if (!arcd) return ret;
+
+    lg = salara_verbose;
+
+    if (withlock) ast_mutex_lock(&act_lock);
+
+	bf = arcd->before;
+	nx = arcd->next;
+	if (bf) {
+	    if (nx) {
+		bf->next = nx;
+		nx->before = bf;
+	    } else {
+		bf->next = NULL;
+		act_hdr.end = bf;
+	    }
+	} else {
+	    if (nx) {
+		act_hdr.first = nx;
+		nx->before = NULL;
+	    } else {
+		act_hdr.first = NULL;
+		act_hdr.end = NULL;
+	    }
+	}
+	if (act_hdr.counter>0) act_hdr.counter--;
+	if (arcd->act) free(arcd->act);
+	free(arcd); arcd = NULL;
+	ret=0;
+
+	if (lg) {//>=2
+	    ast_verbose("[%s] delete_act : first=0x%x end=0x%x counter=%u\n",
+			AST_MODULE,
+			(unsigned int)act_hdr.first,
+			(unsigned int)act_hdr.end,
+			act_hdr.counter);
+	}
+
+    if (withlock) ast_mutex_unlock(&act_lock);
+
+    return ret;
+}
+//------------------------------------------------------------------------
+static void delete_act_list()
+{
+    ast_mutex_lock(&act_lock);
+
+	while (act_hdr.first) delete_act(act_hdr.first,0);
+
+    ast_mutex_unlock(&act_lock);
+}
+//------------------------------------------------------------------------
+static void init_act_list()
+{
+    ast_mutex_lock(&act_lock);
+
+	act_hdr.first = act_hdr.end = NULL;
+	act_hdr.counter = 0;
+
+    ast_mutex_unlock(&act_lock);
+}
+//------------------------------------------------------------------------
+static int update_act_by_index(unsigned int act_ind, int status, char *resp)
+{
+int lg, ret=-1, len;
+s_act_list *temp=NULL, *tmp=NULL;
+
+    if (!act_ind) return ret;
+
+    lg = salara_verbose;
+
+    ast_mutex_lock(&act_lock);
+
+	if (act_hdr.first) {
+	    tmp = act_hdr.first;
+	    while (tmp) {
+		if ((tmp->act) && (tmp->act->id == act_ind)) {
+		    ret = 0;
+		    break;
+		} else {
+		    temp = tmp->next;
+		    tmp = temp;
+		}
+	    }
+	}
+	if (!ret) {
+	    if (tmp->act) {
+		tmp->act->status = status;
+		len = strlen(resp); if (len>=SIZE_OF_RESP) len=SIZE_OF_RESP-1;
+		memset((char *)tmp->act->resp, 0, SIZE_OF_RESP);
+		if (len>0) memcpy((char *)tmp->act->resp, resp, len);
+		if (lg)//>=2
+		    ast_verbose("[%s] update_act_by_index : adr=0x%x ind=%u status=%d resp='%s'\n",
+			AST_MODULE,
+			(unsigned int)tmp,
+			tmp->act->id,
+			tmp->act->status,
+			(char *)tmp->act->resp);
+	    } else ret=-1;
+	}
+
+    ast_mutex_unlock(&act_lock);
+
+    return ret;
+
+}
+//------------------------------------------------------------------------
+static int update_act(s_act_list *arcd, int status, char *resp)
+{
+int ret=-1, lg, len;
+
+    if (!arcd) return ret;
+
+    lg = salara_verbose;
+
+    ast_mutex_lock(&act_lock);
+
+	if (arcd->act) {
+	    arcd->act->status = status;
+	    len = strlen(resp); if (len>=SIZE_OF_RESP) len=SIZE_OF_RESP-1;
+	    memset((char *)arcd->act->resp, 0, SIZE_OF_RESP);
+	    if (len>0) memcpy((char *)arcd->act->resp, resp, len);
+	    ret=0;
+	    if (lg)//>=2
+		ast_verbose("[%s] update_act : adr=0x%x ind=%u status=%d resp='%s'\n",
+			AST_MODULE,
+			(unsigned int)arcd,
+			arcd->act->id,
+			arcd->act->status,
+			(char *)arcd->act->resp);
+	}
+
+    ast_mutex_unlock(&act_lock);
+
+    return ret;
+}
+//------------------------------------------------------------------------
+static s_act_list *find_act(unsigned int act_ind)
+{
+int lg;
+s_act_list *ret=NULL, *temp=NULL, *tmp=NULL;
+
+    if (!act_ind) return ret;
+
+    lg = salara_verbose;
+
+    ast_mutex_lock(&act_lock);
+
+	if (act_hdr.first) {
+	    tmp = act_hdr.first;
+	    while (tmp) {
+		if ((tmp->act) && (tmp->act->id == act_ind)) {
+		    ret = tmp;
+		    break;
+		} else {
+		    temp = tmp->next;
+		    tmp = temp;
+		}
+	    }
+	}
+	
+	if (lg) {//>=2
+	    if (ret)
+		ast_verbose("[%s] find_act : first=0x%x end=0x%x counter=%u\n"
+			    "\t-- rec=0x%x before=0x%x next=0x%x ind=%u status=%d resp='%s'\n",
+			AST_MODULE,
+			(unsigned int)act_hdr.first,
+			(unsigned int)act_hdr.end,
+			act_hdr.counter,
+			(unsigned int)ret,
+			(unsigned int)ret->before,
+			(unsigned int)ret->next,
+			ret->act->id,
+			ret->act->status,
+			(char *)ret->act->resp);
+	    else
+		ast_verbose("[%s] find_act : first=0x%x end=0x%x counter=%u, record with ind=%u not found\n",
+			AST_MODULE,
+			(unsigned int)act_hdr.first,
+			(unsigned int)act_hdr.end,
+			act_hdr.counter,
+			act_ind);
+	}
+
+    ast_mutex_unlock(&act_lock);
+
+    return ret;
+}
+//------------------------------------------------------------------------
+static s_act_list *add_act(unsigned int act_ind)
+{
+int lg;
+s_act_list *ret=NULL, *tmp=NULL;
+s_act *str=NULL;
+
+    if (act_ind <= 0) return ret;
+
+    lg = salara_verbose;
+
+    ast_mutex_lock(&act_lock);
+
+	s_act_list *rec = (s_act_list *)calloc(1,sizeof(s_act_list));
+	if (rec) {
+	    str = (s_act *)calloc(1,sizeof(s_act));
+	    if (str) {
+		rec->act = str;
+		rec->act->id = act_ind;
+		rec->act->status = -1;
+		memset((char *)rec->act->resp, 0, SIZE_OF_RESP);
+		rec->before = rec->next = NULL;
+		if (act_hdr.first == NULL) {//first record
+		    act_hdr.first = act_hdr.end = rec;
+		} else {//add to tail
+		    tmp = act_hdr.end;
+		    rec->before = tmp;
+		    act_hdr.end = rec;
+		    tmp->next = rec;
+		}
+		act_hdr.counter++;
+		ret=rec;
+	    } else free(rec);
+	}
+
+	if (lg) {//>=2
+	    ast_verbose("[%s] add_act : first=0x%x end=0x%x counter=%u\n",
+			AST_MODULE, 
+			(unsigned int)act_hdr.first,
+			(unsigned int)act_hdr.end,
+			act_hdr.counter);
+	    if (ret) ast_verbose("\t-- rec=0x%x before=0x%x next=0x%x ind=%u status=%d resp='%s'\n",
+			(unsigned int)ret,
+			(unsigned int)ret->before,
+			(unsigned int)ret->next,
+			ret->act->id,
+			ret->act->status,
+			(char *)rec->act->resp);
+	}
+
+    ast_mutex_unlock(&act_lock);
+
+    return ret;
+}
 //---------------------------------------------------------------------
 static int msg_send(char * cmd_line);
 static char *TimeNowPrn();
@@ -170,55 +441,20 @@ char *StrLwr(char *st)
     return st;
 }
 //---------------------------------------------------------------------
-static int check_stat(int act_id, int *estat)
+static int check_stat(int stat)
 {
-int ret=-1, aid = act_id, i, stat, id;
+int ret=-1, i;
 
-
-    ast_mutex_lock(&status_lock);
-	stat = evt_status.status;
-	id   = evt_status.id;
-    ast_mutex_unlock(&status_lock);
-
-    if (id == aid) {
-	for (i=0; i<MAX_STATUS; i++) {
-	    if (stat == good_status[i]) {
-		*estat = stat;
-		ret=0;
-		break;
-	    }
+    for (i=0; i<MAX_STATUS; i++) {
+	if (stat == good_status[i]) {
+	    ret=0;
+	    break;
 	}
     }
 
     return ret;
 }
-//---------------------------------------------------------------------
-static int mk_get_status(char *dest)
-{
-int act=-1, lg = salara_verbose;
-char *buf=NULL;
-
-    buf = (char *)calloc(1, CMD_BUF_LEN);
-    if (buf) {
-	ast_mutex_lock(&act_lock);
-	    Act_ID++;
-	    act = Act_ID;
-	ast_mutex_unlock(&act_lock);
-	action_id = act;
-	sprintf(buf,"Action: ExtensionState\nActionID: %u\nExten: %s\nContext: %s\n\n", act, dest, context);
-	if (lg>1) ast_verbose("[%s] Get ExtensionState:\n%s", AST_MODULE, buf);
-	ast_mutex_lock(&status_lock);
-	    evt_status.id = act;
-	    evt_status.status = -1;
-	ast_mutex_unlock(&status_lock);
-	msg_send(buf);
-	free(buf);
-    }
-
-    return act;
-}
 //*********************************************************************************
-
 static s_route_record *add_record(char *from, char *to)
 {
 int len=0, lg;
@@ -502,7 +738,7 @@ static void salara_atexit(void);
 static int read_config(const char * file_name, int prn);
 static int write_config(const char * file_name, int prn);
 static int check_dest(char *from, char *to);
-
+static int MakeAction(int type, char *from, char *to, char *mess, char *ctext);
 //----------------------------------------------------------------------
 #define CURLVERSION_ATLEAST(a,b,c) \
 	((LIBCURL_VERSION_MAJOR > (a)) || ((LIBCURL_VERSION_MAJOR == (a)) && (LIBCURL_VERSION_MINOR > (b))) || ((LIBCURL_VERSION_MAJOR == (a)) && (LIBCURL_VERSION_MINOR == (b)) && (LIBCURL_VERSION_PATCH >= (c))))
@@ -1113,6 +1349,7 @@ char *cid=NULL;
 const char *ccmd = NULL;//"--insecure";//"-k";
 char *info=NULL, *buf = NULL;
 const char *nn = "\"personal_manager_internal_phone\":";
+unsigned int aid;
 
     if (!data) return -1;
 
@@ -1159,7 +1396,7 @@ const char *nn = "\"personal_manager_internal_phone\":";
 			if (uk) {
 			    memset(dest_number,0,AST_MAX_EXTENSION);
 			    memcpy(dest_number, uk2, uk-uk2);
-			    action_id = mk_get_status(dest_number);
+			    aid = MakeAction(2,dest_number,"","",context);
 			}
 		    }
 		}
@@ -1167,10 +1404,14 @@ const char *nn = "\"personal_manager_internal_phone\":";
 	}
     }
 
-    if (action_id>=0) {
+    if (aid>=0) {
 	usleep(1000);
-	if (!check_stat(action_id, &stat)) {
-	    action_id = -1;
+	s_act_list *abc = find_act(aid);
+	if (abc) {
+	    stat = abc->act->status;
+	    delete_act(abc,1);
+	}
+	if (!check_stat(stat)) {
 	    if (lg) ast_verbose("[%s] Extension '%s' status (%d) OK !\n", AST_MODULE, dest_number, stat);
 	} else {
 	    if (lg) ast_verbose("[%s] Extension '%s' status (%d) BAD !\n", AST_MODULE, dest_number, stat);
@@ -1204,20 +1445,25 @@ const char *nn = "\"personal_manager_internal_phone\":";
 
     if (buf) free(buf);
 
-    action_id = -1;
-
     return 0;
 }
 //----------------------------------------------------------------------
 static int hook_callback(int category, const char *event, char *body)
 {
-int lg, id=-1, sti=-1, done=0;
+int lg, id=-1, sti=-1, done=0, dl, rdy=0;
 char *uk=NULL, *uk2=NULL;
-char stx[128]={0};
+char stx[SIZE_OF_RESP]={0};
+const char *S_ActionID = "ActionID:";
+const char *S_Status = "Status:";
+const char *S_Response = "Response:";
+const char *S_StatusText ="StatusText:";
+const char *S_Success = "Success";
+
+
+    if ( (strstr(event,"RTCP")) ||
+	    (strstr(event,"Cdr")) ) return 1;
 
     lg = salara_verbose;
-
-    if (strstr(event,"RTCP")) return 1;
 
     if (strstr(event,"HookResponse")) {
 	if (strstr(body,"Response:")) {
@@ -1239,43 +1485,63 @@ char stx[128]={0};
 
 	if (done) {
 	    append=0;
-	    if (action_id != -1) {
-		if (strstr((char *)evt_resp->body,"Message: Extension Status")) {
-		    uk = strstr((char *)evt_resp->body,"ActionID:");
+	    //if (lg>1) ast_verbose("[hook] event='%s' action_id=%d\n", event, action_id);
+	    uk = strstr((char *)evt_resp->body,S_ActionID);
+	    if (uk) {
+		uk += strlen(S_ActionID);
+		uk2 = strstr(uk,"\r\n");
+		if (uk2) {
+		    memset(stx,0,SIZE_OF_RESP);
+		    dl = uk2 - uk; if (dl>=SIZE_OF_RESP) dl = SIZE_OF_RESP-1;
+		    memcpy(stx, uk, dl);
+		    id = atoi(stx);
+		    uk = strstr((char *)evt_resp->body,S_Status);
 		    if (uk) {
-			uk += 9;
-			uk2 = strstr(uk,"\r\n");
+			uk += strlen(S_Status);
+			uk2 = strstr(uk, "\r\n");
+			if (uk2 == NULL) uk2 = strchr(uk,'\0');
 			if (uk2) {
-			    memcpy(stx, uk, uk2-uk);
-			    id = atoi(stx);
-			    //ast_verbose("[hook] event='%s' stx=[%s] id=%d/%d\n", event, stx, action_id, id);
-			    if (id == action_id) {
-				uk = strstr((char *)evt_resp->body,"Status:");
-				if (uk) {
-				    uk += 7;
-				    uk2 = strstr(uk, "\r\n");
-				    if (uk2) {
-					memset(stx,0,128);
-					memcpy(stx, uk, uk2-uk);
-					sti = atoi(stx);
-					ast_mutex_lock(&status_lock);
-					    if (evt_status.id == id) evt_status.status = sti;
-					ast_mutex_unlock(&status_lock);
-				    }
-				}
+			    memset(stx,0,SIZE_OF_RESP);
+			    dl = uk2 - uk; if (dl>=SIZE_OF_RESP) dl = SIZE_OF_RESP-1;
+			    memcpy(stx, uk, dl);
+			    sti = atoi(stx);
+			    uk = strstr((char *)evt_resp->body,S_StatusText);
+			    if (uk) {
+				uk += strlen(S_StatusText);
+				if (*uk == ' ') uk++;
+				rdy=1;
 			    }
+			}
+		    } else {
+			uk = strstr((char *)evt_resp->body,S_Response);
+			if (uk) {
+			    uk += strlen(S_Response);
+			    if (*uk == ' ') uk++;
+			    sti=-1; if (strstr(uk,S_Success)) sti=0;
+			    rdy=1;
+			}
+		    }
+		    if (rdy) {
+			uk2 = strstr(uk, "\r\n");
+			if (uk2 == NULL) uk2 = strchr(uk,'\0');
+			if (uk2) {
+			    memset(stx,0,SIZE_OF_RESP);
+			    dl = uk2 - uk; if (dl>=SIZE_OF_RESP) dl = SIZE_OF_RESP-1;
+			    memcpy(stx, uk, dl);
+			    if (update_act_by_index(id, sti, stx))
+				if (lg) ast_verbose("[hook] event='%s' action_id=%d not found in act_list\n", event, id);
 			}
 		    }
 		}
 	    }
+
 	    if (console) ast_verbose("%s\n",(char *)evt_resp->body);
 	    else
 	    if (lg>=2) ast_verbose("[%s] event='%s' body=[\n%s]\n",AST_MODULE,event,(char *)evt_resp->body);
-	    del_list(evt_resp);
-	    evt_resp=NULL;
+	    del_list(evt_resp); evt_resp=NULL;
 	}
     } else {
-	if (lg>=2) ast_verbose("[%s] event='%s' body=[\n%s]\n", AST_MODULE, event, body);
+	if (lg>=2) ast_verbose("[%s] event='%s' body=[\n%s\n]\n", AST_MODULE, event, body);
     }
 
     return 0;
@@ -1482,11 +1748,19 @@ char *buf=NULL;
 		    Act_ID++;
 		    act = Act_ID;
 		ast_mutex_unlock(&act_lock);
+		
+		add_act(act);
+		
 		sprintf(buf+strlen(buf),"\nActionID: %u\n\n",act);
 		console=1;
 		msg_send(buf);
 		free(buf);
 		console=0;
+		
+		usleep(1000);
+		s_act_list *abc = find_act(act);
+		if (abc) delete_act(abc,1);
+		
 		return CLI_SUCCESS;
 	    }
 	break;
@@ -1520,6 +1794,9 @@ char *buf=NULL;
 		    Act_ID++;
 		    act = Act_ID;
 		ast_mutex_unlock(&act_lock);
+		
+		add_act(act);
+		
 		//sprintf(buf,"Action: ExtensionState\nActionID: %u_%s\nExten: %s\nContext: alnik\n\n",
 		sprintf(buf,"Action: ExtensionState\nActionID: %u\nExten: %s\nContext: %s\n\n",
 			    act,
@@ -1532,6 +1809,11 @@ char *buf=NULL;
 		msg_send(buf);
 		free(buf);
 		console=0;
+		
+		usleep(1000);
+		s_act_list *abc = find_act(act);
+		if (abc) delete_act(abc,1);
+		
 		return CLI_SUCCESS;
 	    }
 	break;
@@ -1565,6 +1847,9 @@ int act, len=0;
 		    Act_ID++;
 		    act = Act_ID;
 		ast_mutex_unlock(&act_lock);
+
+		add_act(act);
+
 		sprintf(buf,"Action: MessageSend\nActionID: %u\nTo: %s:%s\nFrom: %s\nBody: %s\n\n",
 			    act,
 			    StrLwr(Tech),
@@ -1576,6 +1861,11 @@ int act, len=0;
 		msg_send(buf);
 		free(buf);
 		console=0;
+		
+		usleep(1000);
+		s_act_list *abc = find_act(act);
+		if (abc) delete_act(abc,1);
+		
 		return CLI_SUCCESS;
 	    }
 	break;
@@ -1938,17 +2228,23 @@ struct ast_tcptls_session_instance *i = obj;
     ao2_cleanup(i->private_data);
 }
 //----------------------------------------------------------------------
-static void MakeAction(char *from, char *to, char *mess)
+static int MakeAction(int type, char *from, char *to, char *mess, char *ctext)
 {
 char buf[512]={0};
-int act, lg = salara_verbose;
+int act=0, lg = salara_verbose;
+
+    if ((type < 0) || (type > 2)) return 0;
 
     ast_mutex_lock(&act_lock);
 	Act_ID++;
 	act = Act_ID;
     ast_mutex_unlock(&act_lock);
-    if (!strlen(mess))
-	sprintf(buf,"Action: Originate\nChannel: %s/%s\nContext: %s\nExten: %s\nPriority: 1\n"
+
+    add_act(act);
+
+    switch (type) {
+	case 0:
+	    sprintf(buf,"Action: Originate\nChannel: %s/%s\nContext: %s\nExten: %s\nPriority: 1\n"
 		"Callerid: %s\nTimeout: 30000\nActionID: %u\n\n",
 		StrUpr(Tech),
 		from,
@@ -1956,21 +2252,32 @@ int act, lg = salara_verbose;
 		to,
 		from,
 		act);
-    else
-	sprintf(buf,"Action: MessageSend\nActionID: %u\nTo: %s:%s\nFrom: %s\nBody: %s\n\n",
+	break;
+	case 1:
+	    sprintf(buf,"Action: MessageSend\nActionID: %u\nTo: %s:%s\nFrom: %s\nBody: %s\n\n",
 		act,
 		StrLwr(Tech),
 		to,
 		from,
 		mess);
+	break;
+	case 2:
+	    if (strlen(ctext)) sprintf(buf,"Action: ExtensionState\nActionID: %u\nExten: %s\nContext: %s\n\n", act, from, ctext);
+			  else sprintf(buf,"Action: ExtensionState\nActionID: %u\nExten: %s\nContext: %s\n\n", act, from, context);
+	break;
+    }
+
     if (lg) {
+	ast_verbose("[%s] MakeAction : req_type=%d action_id=%d\n", AST_MODULE, type, act);
 	ast_verbose(buf);
 	console=1;
     }
     msg_send(buf);
     console=0;
 
+    return act;
 }
+//----------------------------------------------------------------------
 /*
 static struct ast_channel *MakeSipCall(char *from, char *to)
 {
@@ -2029,29 +2336,32 @@ char idc[64] = {0};//"1476018192.1";
 }
 */
 //----------------------------------------------------------------------
-static void *cli_nitka(void *data)
+static unsigned int cli_nitka(void *data)
 {
+#define max_param 3
+#define max_param_rest 5
 int lg = salara_verbose;
 struct ast_tcptls_session_instance *ser = data;
-int flags, res=0, ret=-1, len, dl, body_len=0;
+int flags, res=0, len, dl, body_len=0;
+unsigned int ret=0, aid;
 char *buf=NULL;
-int uk=0, loop=1, tmp=0, done=0, stat=-1;
+int uk=0, loop=1, tmp=0, done=0, stat=-1, i=0, req_type=-1;
 char *uki=NULL, *uks=NULL, *uke=NULL;
-const char *answer_good = "\n{\"result\": \"success\"}\n";
-const char *answer_bad = "\n{\"result\": \"error\"}\n";
-const char *names[2] = {"operator=", "phone="};
+const char *answer_bad = "{\"result\":-2,\"text\":\"Error\"}";
+const char *names[max_param] = {"operator=", "phone=", "msg="};
+const char *names_rest[max_param_rest] = {"operator", "phone", "msg", "status", "context"};
 const char *post_len = "Content-Length:";
-char operator[AST_MAX_EXTENSION]={0}, phone[AST_MAX_EXTENSION]={0}, tp[8]={0};
-char msg[AST_MAX_EXTENSION]={0};
+char operator[AST_MAX_EXTENSION]={0}, phone[AST_MAX_EXTENSION]={0}, msg[AST_MAX_EXTENSION]={0}, cont[AST_MAX_EXTENSION]={0};
+char ack_status[SIZE_OF_RESP<<1]={0};
+char ack_text[SIZE_OF_RESP]={0};
+char tp[8]={0};
 unsigned char ok=0, post_flag=0, two;
 char *ustart=NULL, *uk_body=NULL;
 
-//    memset(call_para,0,CALL_PARA_LEN);
 
     buf = (char *)calloc(1,MAX_ANSWER_LEN);
     if (buf) {
 	ustart = buf;
-//ast_verbose("[%s] cli_nitka (adr=0x%x sock=%d cli=%d)\n",AST_MODULE,(unsigned int)ser, ser->fd, ser->client);
 
 	flags = fcntl(ser->fd, F_GETFL);
 	flags |= O_NONBLOCK;
@@ -2064,7 +2374,7 @@ char *ustart=NULL, *uk_body=NULL;
 	    memset(buf,0,MAX_ANSWER_LEN);
 	    while (loop) {
 		tmp = read(ser->fd, buf+uk, MAX_ANSWER_LEN-uk-1);
-		if (tmp == 0) { ret=0;  loop=0; done=1; }
+		if (tmp == 0) { loop=0; done=1; }
 		else
 		if (tmp > 0) {
 		    if ((res + tmp) < MAX_ANSWER_LEN) {
@@ -2086,74 +2396,91 @@ char *ustart=NULL, *uk_body=NULL;
 				    }
 				}
 			    }
-			    if (!post_flag) {
+			    if (!post_flag) {//GET : http://localhost:5058/operator=8003&phone=000&msg="1234567"
 				if ((uki+4-ustart) < MAX_ANSWER_LEN) *(uki+4) = 0;
-				ret=res; loop=0; done=1;
-				uks = strstr(buf, names[0]);
-				if (uks) {
-				    uks += strlen(names[0]);
-				    uke = strchr(uks,'&');
-				    if (uke) {
-					len = uke-uks; if (len >= AST_MAX_EXTENSION) len=AST_MAX_EXTENSION-1;
-					memcpy(operator, uks, len);
-					uks = strstr(buf, names[1]);
-					if (uks) {
-					    uks += strlen(names[1]);
-					    uke = strchr(uks, ' ');
-					    if (uke) {
-						len = uke-uks; if (len >= AST_MAX_EXTENSION) len=AST_MAX_EXTENSION-1;
-						memcpy(phone, uks, len);
-						ok=1;
+				loop=0; done=1; i=0;
+				while (i<max_param) {
+				    uks = strstr(buf, names[i]);
+				    if (uks) {
+					uks += strlen(names[i]);
+					uke = strchr(uks,'&');
+					if (uke==NULL) uke = strstr(uks," HTTP");
+					if (uke) {
+					    len = uke-uks; if (len >= AST_MAX_EXTENSION) len=AST_MAX_EXTENSION-1;
+					    switch (i) {
+						case 0: memcpy(operator, uks, len); break;
+						case 1: memcpy(phone, uks, len); break;
+						case 2: memcpy(msg, uks, len); break;
 					    }
 					}
 				    }
+				    i++;
 				}
-			    } else {//post request
+				if (i>1) ok=1;
+			    } else {//POST
 				if ((uk_body + body_len) >= (buf + res)) {
-				    ret=res; loop=0; done=1;
+				    req_type = -1;//no command
+				    loop=0; done=1;
 				    json_error_t err;
 				    json_t *obj = json_loads(uk_body, 0, &err);
 				    if (obj) {
 					unsigned char er=0;
-					json_t *tobj = json_object_get(obj, "operator");
+					json_t *tobj = json_object_get(obj, names_rest[0]);//"operator"
 					if (json_is_string(tobj)) sprintf(operator,"%s", json_string_value(tobj));
 					else
 					if (json_is_integer(tobj)) sprintf(operator,"%lld", json_integer_value(tobj));
 					else er=1;
 					if (!er) {
-					    tobj = json_object_get(obj, "phone");
+					    tobj = json_object_get(obj, names_rest[1]);//"phone"
 					    if (json_is_string(tobj)) sprintf(phone,"%s", json_string_value(tobj));
 					    else
 					    if (json_is_integer(tobj)) sprintf(phone,"%lld", json_integer_value(tobj));
 					    else er=1;
 					    if (!er) {
-						tobj = json_object_get(obj, "msg");
+						req_type = 0;//make call
+						tobj = json_object_get(obj, names_rest[2]);//"msg"
 						if (json_is_string(tobj)) sprintf(msg,"%s", json_string_value(tobj));
+						else er=1;
+						if (!er) {
+						    req_type = 1;//send message
+						}
+					    }
+					} else {
+					    er=0;
+					    json_t *tobj = json_object_get(obj, names_rest[3]);//"status"
+					    if (json_is_string(tobj)) sprintf(operator,"%s", json_string_value(tobj));
+					    else
+					    if (json_is_integer(tobj)) sprintf(operator,"%lld", json_integer_value(tobj));
+					    else er=1;
+					    if (!er) {
+						req_type = 2;//get status
+						tobj = json_object_get(obj, names_rest[4]);//"context"
+						if (json_is_string(tobj)) sprintf(cont,"%s", json_string_value(tobj));
 						else er=1;
 					    }
 					}
 					json_decref(obj); obj=NULL;
 					ok = ~er;
-				    } else {
-					uks = strstr(uk_body, names[0]);
-					if (uks) {
-					    uks += strlen(names[0]);
-					    uke = strchr(uks,'&');
-					    if (uke) {
-						len = uke-uks; if (len >= AST_MAX_EXTENSION) len=AST_MAX_EXTENSION-1;
-						memcpy(operator, uks, len);
-						uks = strstr(uk_body, names[1]);
-						if (uks) {
-						    uks += strlen(names[1]);
-						    uke = strchr(uks, '\0');
-						    if (uke) {
-							len = uke-uks; if (len >= AST_MAX_EXTENSION) len=AST_MAX_EXTENSION-1;
-							memcpy(phone, uks, len);
-							ok=1;
+				    } else {//not json format
+					i=0;
+					while (i<max_param) {
+					    uks = strstr(buf, names[i]);
+					    if (uks) {
+						uks += strlen(names[i]);
+						uke = strchr(uks,'&');
+						if (uke==NULL) uke = strchr(uks,'\0');
+						if (uke) {
+						    len = uke-uks; if (len >= AST_MAX_EXTENSION) len=AST_MAX_EXTENSION-1;
+						    switch (i) {
+							case 0: memcpy(operator, uks, len); break;
+							case 1: memcpy(phone, uks, len); break;
+							case 2: memcpy(msg, uks, len); break;
 						    }
 						}
 					    }
+					    i++;
 					}
+					if (i>1) ok=1;
 				    }
 				    //if (salara_verbose) ast_verbose("[%s] Post data:%s\n", AST_MODULE, uk_body);
 				}
@@ -2166,39 +2493,50 @@ char *ustart=NULL, *uk_body=NULL;
 	    if (ok) {
 		//------------------------------------------------------
 		two=0;
-		action_id = mk_get_status(operator);
+		aid = MakeAction(2,operator,phone,msg,cont);//get status extension
 		usleep(1000);
-		if (action_id>=0) {
-		    if (!check_stat(action_id, &stat)) {
-			action_id = -1;
-			if (lg>1) ast_verbose("[%s] Dest extension '%s' status (%d) OK !\n", AST_MODULE, operator, stat);
-			two++;
-		    } else {
-			ast_verbose("[%s] Dest extension '%s' status (%d) BAD !\n", AST_MODULE, operator, stat);
+		memset(ack_text,0,SIZE_OF_RESP);
+		if (aid>0) {
+		    s_act_list *abc = find_act(aid);
+		    if (abc) {
+			stat = abc->act->status;
+			strcpy(ack_text, abc->act->resp);
+			delete_act(abc,1);
 		    }
-		}
-		if (two) {
-		    write(ser->fd, answer_good, strlen(answer_good));
+		    if (!check_stat(stat)) two++;
+		    if (lg) ast_verbose("[%s] Dest extension '%s' status (%d)\n", AST_MODULE, operator, stat);
+		    if (req_type == 2) {//get status
+			two=0;
+			done=1;
+			sprintf(ack_status,"{\"result\":%d,\"text\":\"%s\"}", stat, ack_text);
+			write(ser->fd, ack_status, strlen(ack_status));
+			if (lg) ast_verbose("[%s] Send answer '%s' to rest client\n", AST_MODULE, ack_status);
+			break;
+		    } else {
+			sprintf(ack_status,"{\"result\":%d,\"text\":\"%s\"}", stat, ack_text);
+			write(ser->fd, ack_status, strlen(ack_status));
+			if (lg) ast_verbose("[%s] Send answer '%s' to rest client\n", AST_MODULE, ack_status);
+		    }
 		} else {
 		    write(ser->fd, answer_bad, strlen(answer_bad));
+		    if (lg) ast_verbose("[%s] Send answer '%s' to rest client\n", AST_MODULE, answer_bad);
 		}
 	    } else {
 		write(ser->fd, answer_bad, strlen(answer_bad));
-		ast_verbose("[%s] Error request parser\n", AST_MODULE);
+		if (lg) ast_verbose("[%s] Error request parser\n", AST_MODULE);
 	    }
+
 	    if ((res>0) && !ok && lg) ast_verbose("%s\n", buf);
+
 	    if (errno != EINTR && errno != EAGAIN && errno != 0) {
-		ast_verbose("[%s] Socket error reading data: '%s'\n", AST_MODULE, strerror(errno));
-		ret=-1;
-		goto out;
+		if (lg) ast_verbose("[%s] Socket error reading data: '%s'\n", AST_MODULE, strerror(errno));
+		done=1;
 	    }
 	    if (done) break;
 	}
 
-    } else ast_verbose("[%s] Error calloc in cli_nitka (sock=%d)\n", AST_MODULE, ser->fd);
+    } else if (lg) ast_verbose("[%s] Error calloc in cli_nitka (sock=%d)\n", AST_MODULE, ser->fd);
 
-out:
-    if ((ret==0) && (lg)) ast_verbose("[%s] Client closed connection for socket %d\n", AST_MODULE, ser->fd);
 
     if (ser->fd > 0) {
 	if (lg>1) ast_verbose("[%s] Close client socket %d\n", AST_MODULE, ser->fd);
@@ -2206,22 +2544,14 @@ out:
 	close(ser->fd);
     }
 
-//ast_verbose("[%s] cli_nitka buf:\n%s\n",AST_MODULE,buf);
     if (buf) free(buf);
 
 
-    if (lg) ast_verbose("[%s] cli_nitka : numbers='%s:%s:%s', release session (obj='0x%x' sock=%d)\n",
-		AST_MODULE,
-		operator,
-		phone,
-		msg,
-		(unsigned int)data,
-		ser->fd);
-    ao2_ref(ser, -1); ser=NULL;
+    if ((ok) && (two) && (req_type != 2)) {
+	ret = MakeAction(req_type, operator, phone, msg, cont);
+    }
 
-    if ((ok) && (two)) MakeAction(operator, phone, msg);
-
-    return NULL;
+    return ret;
 }
 //----------------------------------------------------------------------
 static void *cli_connection(void *data)
@@ -2229,19 +2559,16 @@ static void *cli_connection(void *data)
 int lg = salara_verbose;
 struct ast_tcptls_session_instance *tcptls_session = data;
 
-    if (lg) ast_verbose("[%s] cli_connection from client '%s' (obj=0x%x sock=%d)\n",
-		AST_MODULE,
+    if (lg) ast_verbose("[%s %s] cli_connection from client '%s' (adr=0x%x sock=%d)\n",
+		AST_MODULE, TimeNowPrn(),
 		ast_sockaddr_stringify(&tcptls_session->remote_address),
 		(unsigned int)data,
 		tcptls_session->fd);
 
-    cli_nitka(tcptls_session);
+    tcptls_session->client = cli_nitka(tcptls_session);//ActionID -> to cli_para()
 
-    //return tcptls_session->parent->worker_fn(tcptls_session);
-    pthread_exit(NULL);
+    return tcptls_session->parent->worker_fn(tcptls_session);
 
-//    ao2_ref(tcptls_session, -1);
-//    return NULL;
 
 }
 //----------------------------------------------------------------------
@@ -2254,7 +2581,7 @@ struct ast_tcptls_session_instance *tcptls_session;
 pthread_t launched;
 
 
-    ast_verbose("[%s] srv_nitka listen port %d (obj=0x%x sock=%d)\n",
+    ast_verbose("[%s] srv_nitka listen port %d (adr=0x%x sock=%d)\n",
 		AST_MODULE,
 		ast_sockaddr_port(&desc->local_address),
 		(unsigned int)desc,
@@ -2289,31 +2616,32 @@ pthread_t launched;
 	if (ast_pthread_create_detached_background(&launched, NULL, cli_connection, tcptls_session)) {
 	    ast_verbose("[%s] Unable to launch helper thread: %s\n", AST_MODULE, strerror(errno));
 	    ao2_ref(tcptls_session, -1);
-	}// else ast_verbose("[%s] srv_nitka : Client '%s'\n", AST_MODULE, ast_sockaddr_stringify(&addr));
+	}// else ast_verbose("[%s] srv_nitka : Thread start for client '%s'\n", AST_MODULE, ast_sockaddr_stringify(&addr));
     }
     return NULL;
 }
 
 //----------------------------------------------------------------------
-/**/
 static void *cli_para(void *data)
 {
-/*
 int lg = salara_verbose;
 struct ast_tcptls_session_instance *t_s = data;
+s_act_list *abc = NULL;
 
-    if (lg) ast_verbose("[%s] Cli_para : numbers='%s', release session (obj='0x%x' sock=%d)\n",
-		AST_MODULE,
-		call_para,
+    if (lg) ast_verbose("[%s %s] cli_para : ind=%d, release session (obj='0x%x' sock=%d)\n",
+		AST_MODULE, TimeNowPrn(),
+		(unsigned int)t_s->client,
 		(unsigned int)data,
 		t_s->fd);
-    ao2_ref(t_s, -1); t_s=NULL;
-*/
+    if (t_s->client>0) {
+	abc = find_act(t_s->client);
+	if (abc) delete_act(abc,1);
+    }
+
+    ao2_ref(t_s, -1);
 
     return NULL;
-
 }
-/**/
 //----------------------------------------------------------------------
 /*
 static void periodics(void *data)
@@ -2353,6 +2681,8 @@ int res;
     //write_config(salara_config_file, 0);
 
     ast_mutex_lock(&salara_lock);
+
+	delete_act_list();
 
 	remove_records();
 
@@ -2412,8 +2742,10 @@ struct ast_sockaddr sami_desc_local_address_tmp;
     ast_mutex_lock(&salara_lock);
 
 	ast_mutex_lock(&act_lock);
-	Act_ID = 0;
+	    Act_ID = 0;
 	ast_mutex_unlock(&act_lock);
+
+	init_act_list();
 
 	init_records();
 
