@@ -1,5 +1,6 @@
 #include <ctype.h>
 #include <netdb.h>
+//#include <inttypes.h>
 #include <curl/curl.h>
 #include <jansson.h>
 
@@ -13,20 +14,27 @@
 #include <asterisk/manager.h>
 #include <asterisk/paths.h>
 #include <asterisk/utils.h>
-
 #include <asterisk/lock.h>
 #include <asterisk/file.h>
 #include <asterisk/app.h>
 #include <asterisk/threadstorage.h>
 #include <asterisk/test.h>
-
 #include <asterisk/tcptls.h>
-//#include "asterisk/options.h"
-//#include "asterisk/astobj2.h"
-
 #include "asterisk/format_cache.h"
 
 #undef DO_SSL
+
+//#define x64
+#undef x64
+
+#ifdef x64
+    #define ADR_PRIX __PRI64_PREFIX "X"
+    typedef uint64_t ADR_TYPE;
+#else
+    #define ADR_PRIX "X"
+    typedef uint32_t ADR_TYPE;
+#endif
+
 
 #define TIME_STR_LEN 128
 #define AST_MODULE "salara"
@@ -208,10 +216,10 @@ s_act_list *bf=NULL, *nx=NULL;
 	ret=0;
 
 	if (lg) {//>=2
-	    ast_verbose("[%s] delete_act : first=0x%x end=0x%x counter=%u\n",
+	    ast_verbose("[%s] delete_act : first=0x%"ADR_PRIX" end=0x%"ADR_PRIX" counter=%u\n",
 			AST_MODULE,
-			(unsigned int)act_hdr.first,
-			(unsigned int)act_hdr.end,
+			(ADR_TYPE)act_hdr.first,
+			(ADR_TYPE)act_hdr.end,
 			act_hdr.counter);
 	}
 
@@ -269,9 +277,9 @@ s_act_list *temp=NULL, *tmp=NULL;
 		memset((char *)tmp->act->resp, 0, SIZE_OF_RESP);
 		if (len>0) memcpy((char *)tmp->act->resp, resp, len);
 		if (lg)//>=2
-		    ast_verbose("[%s] update_act_by_index : adr=0x%x ind=%u status=%d resp='%s'\n",
+		    ast_verbose("[%s] update_act_by_index : adr=0x%"ADR_PRIX" ind=%u status=%d resp='%s'\n",
 			AST_MODULE,
-			(unsigned int)tmp,
+			(ADR_TYPE)tmp,
 			tmp->act->id,
 			tmp->act->status,
 			(char *)tmp->act->resp);
@@ -301,9 +309,9 @@ int ret=-1, lg, len;
 	    if (len>0) memcpy((char *)arcd->act->resp, resp, len);
 	    ret=0;
 	    if (lg)//>=2
-		ast_verbose("[%s] update_act : adr=0x%x ind=%u status=%d resp='%s'\n",
+		ast_verbose("[%s] update_act : adr=0x%"ADR_PRIX" ind=%u status=%d resp='%s'\n",
 			AST_MODULE,
-			(unsigned int)arcd,
+			(ADR_TYPE)arcd,
 			arcd->act->id,
 			arcd->act->status,
 			(char *)arcd->act->resp);
@@ -340,23 +348,23 @@ s_act_list *ret=NULL, *temp=NULL, *tmp=NULL;
 	
 	if (lg) {//>=2
 	    if (ret)
-		ast_verbose("[%s] find_act : first=0x%x end=0x%x counter=%u\n"
-			    "\t-- rec=0x%x before=0x%x next=0x%x ind=%u status=%d resp='%s'\n",
+		ast_verbose("[%s] find_act : first=0x%"ADR_PRIX" end=0x%"ADR_PRIX" counter=%u\n"
+			    "\t-- rec=0x%"ADR_PRIX" before=0x%"ADR_PRIX" next=0x%"ADR_PRIX" ind=%u status=%d resp='%s'\n",
 			AST_MODULE,
-			(unsigned int)act_hdr.first,
-			(unsigned int)act_hdr.end,
+			(ADR_TYPE)act_hdr.first,
+			(ADR_TYPE)act_hdr.end,
 			act_hdr.counter,
-			(unsigned int)ret,
-			(unsigned int)ret->before,
-			(unsigned int)ret->next,
+			(ADR_TYPE)ret,
+			(ADR_TYPE)ret->before,
+			(ADR_TYPE)ret->next,
 			ret->act->id,
 			ret->act->status,
 			(char *)ret->act->resp);
 	    else
-		ast_verbose("[%s] find_act : first=0x%x end=0x%x counter=%u, record with ind=%u not found\n",
+		ast_verbose("[%s] find_act : first=0x%"ADR_PRIX" end=0x%"ADR_PRIX" counter=%u, record with ind=%u not found\n",
 			AST_MODULE,
-			(unsigned int)act_hdr.first,
-			(unsigned int)act_hdr.end,
+			(ADR_TYPE)act_hdr.first,
+			(ADR_TYPE)act_hdr.end,
 			act_hdr.counter,
 			act_ind);
 	}
@@ -401,15 +409,15 @@ s_act *str=NULL;
 	}
 
 	if (lg) {//>=2
-	    ast_verbose("[%s] add_act : first=0x%x end=0x%x counter=%u\n",
+	    ast_verbose("[%s] add_act : first=0x%"ADR_PRIX" end=0x%"ADR_PRIX" counter=%u\n",
 			AST_MODULE, 
-			(unsigned int)act_hdr.first,
-			(unsigned int)act_hdr.end,
+			(ADR_TYPE)act_hdr.first,
+			(ADR_TYPE)act_hdr.end,
 			act_hdr.counter);
-	    if (ret) ast_verbose("\t-- rec=0x%x before=0x%x next=0x%x ind=%u status=%d resp='%s'\n",
-			(unsigned int)ret,
-			(unsigned int)ret->before,
-			(unsigned int)ret->next,
+	    if (ret) ast_verbose("\t-- rec=0x%"ADR_PRIX" before=0x%"ADR_PRIX" next=0x%"ADR_PRIX" ind=%u status=%d resp='%s'\n",
+			(ADR_TYPE)ret,
+			(ADR_TYPE)ret->before,
+			(ADR_TYPE)ret->next,
 			ret->act->id,
 			ret->act->status,
 			(char *)rec->act->resp);
@@ -489,17 +497,17 @@ s_route_record *ret=NULL, *tmp=NULL;
 	}
 
 	if (lg >= 2) {
-	    ast_verbose("[%s] add_record : first=0x%x end=0x%x counter=%d (from='%s' to='%s')\n",
+	    ast_verbose("[%s] add_record : first=0x%"ADR_PRIX" end=0x%"ADR_PRIX" counter=%d (from='%s' to='%s')\n",
 			AST_MODULE, 
-			(unsigned int)route_hdr.first,
-			(unsigned int)route_hdr.end,
+			(ADR_TYPE)route_hdr.first,
+			(ADR_TYPE)route_hdr.end,
 			route_hdr.counter,
 			from,
 			to);
-	    if (ret) ast_verbose("\t-- rec=0x%x before=0x%x next=0x%x caller='%s' called='%s'\n",
-			(unsigned int)ret,
-			(unsigned int)ret->before,
-			(unsigned int)ret->next,
+	    if (ret) ast_verbose("\t-- rec=0x%"ADR_PRIX" before=0x%"ADR_PRIX" next=0x%"ADR_PRIX" caller='%s' called='%s'\n",
+			(ADR_TYPE)ret,
+			(ADR_TYPE)ret->before,
+			(ADR_TYPE)ret->next,
 			ret->caller,
 			ret->called);
 	}
@@ -535,18 +543,18 @@ s_route_record *ret=NULL, *temp=NULL, *tmp=NULL;
 	
 	if (lg >= 2) {
 	    if (ret)
-		ast_verbose("[%s] find_record : first=0x%x end=0x%x counter=%d from='%s', record found 0x%x\n",
+		ast_verbose("[%s] find_record : first=0x%"ADR_PRIX" end=0x%"ADR_PRIX" counter=%d from='%s', record found 0x%"ADR_PRIX"\n",
 			AST_MODULE,
-			(unsigned int)route_hdr.first,
-			(unsigned int)route_hdr.end,
+			(ADR_TYPE)route_hdr.first,
+			(ADR_TYPE)route_hdr.end,
 			route_hdr.counter,
 			from,
-			(unsigned int)ret);
+			(ADR_TYPE)ret);
 	    else
-		ast_verbose("[%s] find_record : first=0x%x end=0x%x counter=%d from='%s', record not found\n",
+		ast_verbose("[%s] find_record : first=0x%"ADR_PRIX" end=0x%"ADR_PRIX" counter=%d from='%s', record not found\n",
 			AST_MODULE,
-			(unsigned int)route_hdr.first,
-			(unsigned int)route_hdr.end,
+			(ADR_TYPE)route_hdr.first,
+			(ADR_TYPE)route_hdr.end,
 			route_hdr.counter,
 			from);
 	}
@@ -591,10 +599,10 @@ s_route_record *bf=NULL, *nx=NULL;
 	ret=0;
 
 	if (lg >= 2) {
-	    ast_verbose("[%s] del_record : first=0x%x end=0x%x counter=%d\n",
+	    ast_verbose("[%s] del_record : first=0x%"ADR_PRIX" end=0x%"ADR_PRIX" counter=%d\n",
 			AST_MODULE,
-			(unsigned int)route_hdr.first,
-			(unsigned int)route_hdr.end,
+			(ADR_TYPE)route_hdr.first,
+			(ADR_TYPE)route_hdr.end,
 			route_hdr.counter);
 	}
 
@@ -1349,7 +1357,8 @@ char *cid=NULL;
 const char *ccmd = NULL;//"--insecure";//"-k";
 char *info=NULL, *buf = NULL;
 const char *nn = "\"personal_manager_internal_phone\":";
-unsigned int aid;
+unsigned int aid=0;
+s_act_list *abc = NULL;
 
     if (!data) return -1;
 
@@ -1406,7 +1415,7 @@ unsigned int aid;
 
     if (aid>=0) {
 	usleep(1000);
-	s_act_list *abc = find_act(aid);
+	abc = find_act(aid);
 	if (abc) {
 	    stat = abc->act->status;
 	    delete_act(abc,1);
@@ -1598,9 +1607,9 @@ s_route_record *rt=NULL, *nx=NULL;
 	    ast_cli(a->fd, "\t-- routing table: records: %d",route_hdr.counter);
 	    if (lg == 2) {
 		if (route_hdr.first)
-		    ast_cli(a->fd," (first=0x%x, end=0x%x)",
-				(unsigned int)route_hdr.first,
-				(unsigned int)route_hdr.end);
+		    ast_cli(a->fd," (first=0x%"ADR_PRIX", end=0x%"ADR_PRIX")",
+				(ADR_TYPE)route_hdr.first,
+				(ADR_TYPE)route_hdr.end);
 	    }
 	    ast_cli(a->fd,"\n");
 	ast_mutex_unlock(&route_lock);
@@ -1609,15 +1618,15 @@ s_route_record *rt=NULL, *nx=NULL;
 	    rt = route_hdr.first;
 	    if (rt) {
 		ast_cli(a->fd, "\tSalara route table (caller:called):\n");
-		if (lg == 2) ast_cli(a->fd,"\tHDR: first=0x%x end=0x%x counter=%d\n",
-				    (unsigned int)route_hdr.first,
-				    (unsigned int)route_hdr.end,
+		if (lg == 2) ast_cli(a->fd,"\tHDR: first=0x%"ADR_PRIX" end=0x%"ADR_PRIX" counter=%d\n",
+				    (ADR_TYPE)route_hdr.first,
+				    (ADR_TYPE)route_hdr.end,
 				    route_hdr.counter);
 		while (rt) {
-		    if (lg == 2) ast_cli(a->fd,"\trec=0x%x before=0x%x next=0x%x caller='%s' called='%s'\n",
-					(unsigned int)rt,
-					(unsigned int)rt->before,
-					(unsigned int)rt->next,
+		    if (lg == 2) ast_cli(a->fd,"\trec=0x%"ADR_PRIX" before=0x%"ADR_PRIX" next=0x%"ADR_PRIX" caller='%s' called='%s'\n",
+					(ADR_TYPE)rt,
+					(ADR_TYPE)rt->before,
+					(ADR_TYPE)rt->next,
 					rt->caller,
 					rt->called);
 			    else ast_cli(a->fd,"\t%s:%s\n", rt->caller, rt->called);
@@ -2355,7 +2364,7 @@ char operator[AST_MAX_EXTENSION]={0}, phone[AST_MAX_EXTENSION]={0}, msg[AST_MAX_
 char ack_status[SIZE_OF_RESP<<1]={0};
 char ack_text[SIZE_OF_RESP]={0};
 char tp[8]={0};
-unsigned char ok=0, post_flag=0, two;
+unsigned char ok=0, post_flag=0, two=0;
 char *ustart=NULL, *uk_body=NULL;
 
 
@@ -2559,10 +2568,10 @@ static void *cli_connection(void *data)
 int lg = salara_verbose;
 struct ast_tcptls_session_instance *tcptls_session = data;
 
-    if (lg) ast_verbose("[%s %s] cli_connection from client '%s' (adr=0x%x sock=%d)\n",
+    if (lg) ast_verbose("[%s %s] cli_connection from client '%s' (adr=0x%"ADR_PRIX" sock=%d)\n",
 		AST_MODULE, TimeNowPrn(),
 		ast_sockaddr_stringify(&tcptls_session->remote_address),
-		(unsigned int)data,
+		(ADR_TYPE)data,
 		tcptls_session->fd);
 
     tcptls_session->client = cli_nitka(tcptls_session);//ActionID -> to cli_para()
@@ -2581,10 +2590,10 @@ struct ast_tcptls_session_instance *tcptls_session;
 pthread_t launched;
 
 
-    ast_verbose("[%s] srv_nitka listen port %d (adr=0x%x sock=%d)\n",
+    ast_verbose("[%s] srv_nitka listen port %d (adr=0x%"ADR_PRIX" sock=%d)\n",
 		AST_MODULE,
 		ast_sockaddr_port(&desc->local_address),
-		(unsigned int)desc,
+		(ADR_TYPE)desc,
 		desc->accept_fd);
 
     for (;;) {
@@ -2628,10 +2637,10 @@ int lg = salara_verbose;
 struct ast_tcptls_session_instance *t_s = data;
 s_act_list *abc = NULL;
 
-    if (lg) ast_verbose("[%s %s] cli_para : ind=%d, release session (obj='0x%x' sock=%d)\n",
+    if (lg) ast_verbose("[%s %s] cli_para : ind=%d, release session (obj=0x%"ADR_PRIX" sock=%d)\n",
 		AST_MODULE, TimeNowPrn(),
 		(unsigned int)t_s->client,
-		(unsigned int)data,
+		(ADR_TYPE)data,
 		t_s->fd);
     if (t_s->client>0) {
 	abc = find_act(t_s->client);
@@ -2649,10 +2658,10 @@ static void periodics(void *data)
 struct ast_tcptls_session_args *desc = data;
 
     srv_time_cnt++;
-    ast_verbose("[%s] Periodics : cnt=%d session=0x%x sock=%d\n",
+    ast_verbose("[%s] Periodics : cnt=%d session=0x%"ADR_PRIX" sock=%d\n",
 		AST_MODULE,
 		srv_time_cnt,
-		(unsigned int)data,
+		(ADR_TYPE)data,
 		desc->accept_fd);
 
 }
