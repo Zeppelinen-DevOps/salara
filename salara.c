@@ -22,7 +22,11 @@
 
 #undef DO_SSL
 
+//#if ASTERISK_VERSION_NUM >= 130000
+//    #define ver13 "ASTERISK_VERSION_NUM"
+//#else
 #define ver13
+//#endif
 //#define CURLs
 
 
@@ -30,7 +34,8 @@
 #define AST_MODULE "salara"
 #define AST_MODULE_DESC "Salara features (transfer call, make call, send [command, message])"
 #define DEF_DEST_NUMBER "1234"
-#define SALARA_VERSION 	"2.1"//12.12.2016
+#define SALARA_VERSION 	"2.2"//14.12.2016
+//"2.1"//12.12.2016
 //"2.0"//10.12.2016
 //"1.9"//09.12.2016
 //"1.8"//09.12.2016
@@ -41,6 +46,7 @@
 #define MAX_ANSWER_LEN 1024
 #define CMD_BUF_LEN 512
 #define MAX_STATUS 8
+#define MAX_ACT_TYPE 4
 
 #define DEFAULT_SRV_ADDR "127.0.0.1:5058"	/* Default address & port for Salara management via TCP */
 
@@ -144,6 +150,8 @@ static s_route_hdr route_hdr = {NULL,NULL,0};
 static unsigned int srv_time_cnt=0;
 
 static char Tech[] = "sip";
+
+static char *ActType[MAX_ACT_TYPE] = {"Make call","Send message","Get status","Unknown"};
 
 AST_MUTEX_DEFINE_STATIC(salara_lock);//global mutex
 
@@ -416,7 +424,7 @@ s_act *str=NULL;
     return ret;
 }
 //---------------------------------------------------------------------
-static int msg_send(char * cmd_line);
+inline static int msg_send(char * cmd_line);
 static char *TimeNowPrn();
 //---------------------------------------------------------------------
 char *StrUpr(char *st)
@@ -805,8 +813,6 @@ static size_t WriteMemoryCallback(void *ptr, size_t size, size_t nmemb, void *da
 
     return realsize;
 }
-//-----------------------------------------------
-
 //-----------------------------------------------
 static int curl_instance_init(void *data)
 {
@@ -1464,6 +1470,8 @@ CURLcode er;
 #endif
 
     if (!data) return -1;
+    else
+    if (!strlen(data)) return -1;
 
     buf = (char *)calloc(1,MAX_ANSWER_LEN);
 
@@ -1505,14 +1513,12 @@ CURLcode er;
 		    AST_MODULE,
 		    dest_number);
     } else {
-	if (data) {
-	    memset(dest_number,0,AST_MAX_EXTENSION);
+	memset(dest_number,0,AST_MAX_EXTENSION);
 #ifdef CURLs
-	    CheckCurlAnswer(buf, dest_number);
+	CheckCurlAnswer(buf, dest_number);
 #else
-	    strcpy(dest_number, buf);
+	strcpy(dest_number, buf);
 #endif
-	}
     }
     aid = MakeAction(2, dest_number, "", "", context);
 
@@ -1570,8 +1576,7 @@ const char *S_StatusText ="StatusText:";
 const char *S_Success = "Success";
 
 
-    if ( (strstr(event,"RTCP")) ||
-	    (strstr(event,"Cdr")) ) return 1;
+    if ( (strstr(event,"RTCP")) || (strstr(event,"Cdr")) ) return 1;
 
     lg = salara_verbose;
 
@@ -1639,7 +1644,7 @@ const char *S_Success = "Success";
 			    dl = uk2 - uk; if (dl>=SIZE_OF_RESP) dl = SIZE_OF_RESP-1;
 			    memcpy(stx, uk, dl);
 			    if (update_act_by_index(id, sti, stx))
-				if (lg) ast_verbose("[hook] event='%s' action_id=%d not found in act_list\n", event, id);
+				if (lg>=2) ast_verbose("[hook] event='%s' action_id=%d not found in act_list\n", event, id);
 			}
 		    }
 		}
@@ -1661,7 +1666,6 @@ static char *cli_salara_info(struct ast_cli_entry *e, int cmd, struct ast_cli_ar
 {
 struct timeval c_t;
 char buf[64]={0};
-int lg;
 s_route_record *rt=NULL, *nx=NULL;
 
     switch (cmd) {
@@ -1680,7 +1684,7 @@ s_route_record *rt=NULL, *nx=NULL;
 
     if (a->argc < 3) return CLI_SHOWUSAGE;
 
-    lg = salara_verbose;
+    int lg = salara_verbose;
 
     if (!strcmp(a->argv[2],"conf")) {
 	salara_config_file_len = read_config(salara_config_file, 1);
@@ -1716,7 +1720,9 @@ s_route_record *rt=NULL, *nx=NULL;
 	    }
 	    ast_cli(a->fd,"\n");
 	ast_mutex_unlock(&route_lock);
+
     } else if (!strcmp(a->argv[2],"route")) {
+
 	ast_mutex_lock(&route_lock);
 	    rt = route_hdr.first;
 	    if (rt) {
@@ -1738,6 +1744,7 @@ s_route_record *rt=NULL, *nx=NULL;
 		}
 	    } else ast_cli(a->fd, "\tSalara route table is Empty\n");
 	ast_mutex_unlock(&route_lock);
+
     }
 
     return CLI_SUCCESS;
@@ -1745,9 +1752,9 @@ s_route_record *rt=NULL, *nx=NULL;
 //------------------------------------------------------------------------------
 static char *cli_salara_set_verbose(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a)
 {
-int lg, nlg;
+int lg = salara_verbose;
 
-    lg = nlg = salara_verbose;
+    int nlg = lg;
 
     switch (cmd) {
 	case CLI_INIT:
@@ -1828,7 +1835,7 @@ char called[AST_MAX_EXTENSION];
     return CLI_SUCCESS;
 }
 //------------------------------------------------------------------------------
-static int msg_send(char * cmd_line)
+inline static int msg_send(char * cmd_line)
 {
     return (ast_hook_send_action(&hook, cmd_line));
 }
@@ -1908,26 +1915,23 @@ char *buf=NULL;
 		    Act_ID++;
 		    act = Act_ID;
 		ast_mutex_unlock(&act_lock);
-		
+
 		add_act(act);
-		
-		//sprintf(buf,"Action: ExtensionState\nActionID: %u_%s\nExten: %s\nContext: alnik\n\n",
+
 		sprintf(buf,"Action: ExtensionState\nActionID: %u\nExten: %s\nContext: %s\n\n",
 			    act,
-			    //a->argv[3],
 			    a->argv[3],
 			    context);
-//		sprintf(buf+strlen(buf),"\nContext: alnik\n\n");
 		ast_cli(a->fd, "%s", buf);
 		console=1;
 		msg_send(buf);
 		free(buf);
 		console=0;
-		
 		usleep(1000);
+
 		s_act_list *abc = find_act(act);
 		if (abc) delete_act(abc,1);
-		
+
 		return CLI_SUCCESS;
 	    }
 	break;
@@ -1975,11 +1979,11 @@ int act, len=0;
 		msg_send(buf);
 		free(buf);
 		console=0;
-		
 		usleep(1000);
+
 		s_act_list *abc = find_act(act);
 		if (abc) delete_act(abc,1);
-		
+
 		return CLI_SUCCESS;
 	    }
 	break;
@@ -2359,7 +2363,7 @@ int act=0, lg = salara_verbose;
     add_act(act);
 
     switch (type) {
-	case 0:
+	case 0://outgoing call
 	    sprintf(buf,"Action: Originate\nChannel: %s/%s\nContext: %s\nExten: %s\nPriority: 1\n"
 		"Callerid: %s\nTimeout: 30000\nActionID: %u\n\n",
 		StrUpr(Tech),
@@ -2369,7 +2373,7 @@ int act=0, lg = salara_verbose;
 		from,
 		act);
 	break;
-	case 1:
+	case 1://message send
 	    sprintf(buf,"Action: MessageSend\nActionID: %u\nTo: %s:%s\nFrom: %s\nBody: %s\n\n",
 		act,
 		StrLwr(Tech),
@@ -2377,7 +2381,7 @@ int act=0, lg = salara_verbose;
 		from,
 		mess);
 	break;
-	case 2:
+	case 2://exten. status
 	    if (strlen(ctext)) sprintf(buf,"Action: ExtensionState\nActionID: %u\nExten: %s\nContext: %s\n\n", act, from, ctext);
 			  else sprintf(buf,"Action: ExtensionState\nActionID: %u\nExten: %s\nContext: %s\n\n", act, from, context);
 	break;
@@ -2403,7 +2407,7 @@ struct ast_tcptls_session_instance *ser = data;
 int flags, res=0, len, dl, body_len=0;
 unsigned int ret=0, aid;
 char *buf=NULL;
-int uk=0, loop=1, tmp=0, done=0, stat=-1, i=0, req_type=-1;
+int uk=0, loop=1, tmp=0, done=0, stat=-1, i=0, req_type=-1, rtype;
 char *uki=NULL, *uks=NULL, *uke=NULL;
 const char *answer_bad = "{\"result\":-2,\"text\":\"Error\"}";
 const char *names[max_param] = {"operator=", "phone=", "msg="};
@@ -2549,6 +2553,18 @@ char *ustart=NULL, *uk_body=NULL;
 	    }//while (loop)
 
 	    if (ok) {
+		if (lg) {
+		    rtype = req_type;
+		    if (rtype >= MAX_ACT_TYPE) rtype=MAX_ACT_TYPE-1;
+		    ast_verbose("[%s] Action type '%s' (%d) with param : operator='%s' phone='%s' msg='%s' context='%s'\n",
+				AST_MODULE,
+				ActType[rtype],
+				rtype,
+				operator,
+				phone,
+				msg,
+				cont);
+		}
 		//------------------------------------------------------
 		two=0;
 		aid = MakeAction(2,operator,phone,msg,cont);//get status extension
@@ -2606,7 +2622,7 @@ char *ustart=NULL, *uk_body=NULL;
     if (buf) free(buf);
 
 
-    if ((ok) && (two) && (req_type != 2)) {
+    if ((ok) && (two) && (req_type < 2)) {
 	ret = MakeAction(req_type, operator, phone, msg, cont);
     }
 
@@ -2690,7 +2706,7 @@ int lg = salara_verbose;
 struct ast_tcptls_session_instance *t_s = data;
 s_act_list *abc = NULL;
 
-    if (lg) ast_verbose("[%s %s] cli_rest_close : ind=%d, release session (adr=%p sock=%d)\n",
+    if (lg) ast_verbose("[%s %s] cli_rest_close : act_id=%d, release session (adr=%p sock=%d)\n",
 		AST_MODULE, TimeNowPrn(),
 		(unsigned int)t_s->client,
 		(void *)data,
@@ -2700,7 +2716,7 @@ s_act_list *abc = NULL;
 	if (abc) delete_act(abc,1);
     }
 
-    ao2_ref(t_s, -1);
+    ao2_ref(t_s, -1);//release session
 
     return NULL;
 }
@@ -2781,6 +2797,9 @@ static int load_module(void)
 {
 int res = 0, lenc = -1;
 struct ast_sockaddr sami_desc_local_address_tmp;
+
+//    ast_verbose("[%s] Load for * version %s\n",AST_MODULE,ast_get_version_num());
+
 
 #ifdef CURLs
     if (!ast_module_check("res_curl.so")) {
