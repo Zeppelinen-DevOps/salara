@@ -19,6 +19,8 @@
 #include <asterisk/threadstorage.h>
 #include <asterisk/test.h>
 #include <asterisk/tcptls.h>
+#include "asterisk/format_cache.h"
+
 
 #undef DO_SSL
 
@@ -29,9 +31,12 @@
 
 #define TIME_STR_LEN 128
 #define AST_MODULE "salara"
-#define AST_MODULE_DESC "Salara features (transfer call, make call, get status exten., send [command, message])"
+#define AST_MODULE_DESC "Features : transfer call; make call; get status: exten., peer, channel; send [command, message]"
 #define DEF_DEST_NUMBER "1234"
-#define SALARA_VERSION 	"2.2"//14.12.2016
+#define SALARA_VERSION "2.5"//18.12.2016
+//"2.4"//17.12.2016
+//"2.3"//16.12.2016
+//"2.2"//14.12.2016
 //"2.1"//12.12.2016
 //"2.0"//10.12.2016
 //"1.9"//09.12.2016
@@ -50,7 +55,9 @@
 #define SIZE_OF_RESP 64
 #define max_param_rest 7
 
-#define max_buf_size 4096
+#define max_buf_size 2048
+
+#define MAX_CHAN_STATE 11
 //------------------------------------------------------------------------
 
 ASTERISK_FILE_VERSION(__FILE__, "$Revision: $");
@@ -66,14 +73,32 @@ struct MemoryStruct {
   size_t size;
 };
 
+/*
 typedef struct {
     char *body;
     int len;
     int part;
     int id;
 } s_resp_list;
+*/
 
+//------------------  for List of channel_name  -----------------------
+typedef struct self {
+    struct self * before;
+    struct self * next;
+    char *chan;//[AST_CHANNEL_NAME];
+    char *exten;//[AST_MAX_EXTENSION];
+    char *caller;//[AST_MAX_EXTENSION];
+    void *ast;
+} s_chan_record;
 
+typedef struct {
+    struct self * first;
+    struct self * end;
+    unsigned int counter;
+} s_chan_hdr;
+
+//-----------------------------------------------------------
 typedef struct self_rec {
     struct self_rec * before;
     struct self_rec * next;
@@ -106,12 +131,16 @@ typedef struct {
     unsigned int counter;
 } s_act_hdr;
 //------------------------------------------------------------------------
+
+static s_chan_hdr chan_hdr = {NULL,NULL,0};
+
 static s_act_hdr act_hdr = {NULL,NULL,0};
 
 static char hook_tmp_str[max_buf_size]={0};
 
 static int reload=0;
 static unsigned char console = 0;
+static unsigned char dirty=1;//clear lost chan_records
 
 static int salara_atexit_registered = 0;
 static int salara_cli_registered = 0;
@@ -141,8 +170,6 @@ static int SALARA_CURLOPT_TIMEOUT = DEF_SALARA_CURLOPT_TIMEOUT;
 
 static char time_str[TIME_STR_LEN]={0};
 
-static int append=0;
-
 static struct timeval salara_start_time = {0, 0};
 
 static const char *salara_config_file = "salara.conf";
@@ -151,8 +178,6 @@ static int salara_config_file_len = 0;
 static int salara_verbose  = 0;//0 - off, 1 - on, 2 - debug, 3 - dump
 
 static unsigned int Act_ID = 0;
-
-static s_resp_list *evt_resp = NULL;
 
 static s_route_hdr route_hdr = {NULL,NULL,0};
 
@@ -171,7 +196,24 @@ static char S_ChanOff[] = "Channel not present\n";
 static const char *S_StatusText ="StatusText:";
 static const char *S_Success = "Success";
 static const char *S_PeerStatus = "PeerStatus:";
+static const char *S_Channel = "Channel:";
+static const char *S_Exten = "Exten:";
+static const char *S_CallerIDNum = "CallerIDNum:";
+static const char *S_ChannelState = "ChannelState:";
+static const char *S_Application ="Application:";
 
+static const char *ChanStateName[MAX_CHAN_STATE] = {
+"DOWN",			/*!< Channel is down and available */
+"RESERVED",		/*!< Channel is down, but reserved */
+"OFFHOOK",		/*!< Channel is off hook */
+"DIALING",		/*!< Digits (or equivalent) have been dialed */
+"RING",			/*!< Line is ringing */
+"RINGING",		/*!< Remote end is ringing */
+"UP",			/*!< Line is up */
+"BUSY",			/*!< Line is busy */
+"DIALING_OFFHOOK",	/*!< Digits (or equivalent) have been dialed while offhook */
+"PRERING",		/*!< Channel has detected an incoming call and is waiting for ring */
+"UNKNOWN"};
 
 AST_MUTEX_DEFINE_STATIC(salara_lock);//global mutex
 
@@ -183,6 +225,7 @@ AST_MUTEX_DEFINE_STATIC(act_lock);//actionID mutex
 
 AST_MUTEX_DEFINE_STATIC(status_lock);//actionID mutex
 
+AST_MUTEX_DEFINE_STATIC(chan_lock);//chan_list mutex
 
 /*********************************************************************************
 unsigned int get_timer_sec(unsigned int t)
@@ -194,7 +237,339 @@ int check_delay_sec(unsigned int t)
     if ((unsigned int)time(NULL) >= t)  return 1; else return 0;
 }
 *********************************************************************************/
+static char *TimeNowPrn();
+static void remove_chan_records();
+static void init_chan_records();
+static s_chan_record *add_chan_record(const char *nchan, const char *caller, const char *ext, void *data);
+static int del_chan_record(s_chan_record *rcd, int withlock);
+static s_chan_record *update_chan(const char *nchan, const char *caller, const char *ext);
+static s_chan_record *find_chan(const char *nchan, const char *caller, const char *ext, int with_del);
+//static void *get_chan_record(s_chan_record *rec, int withlock);
+//------------------------------------------------------------------------
+static void remove_chan_records()
+{
+    ast_mutex_lock(&chan_lock);
 
+	while (chan_hdr.first) {
+	    del_chan_record(chan_hdr.first, 0);
+	}
+
+    ast_mutex_unlock(&chan_lock);
+}
+//------------------------------------------------------------------------
+static void init_chan_records()
+{
+    ast_mutex_lock(&chan_lock);
+
+	if (chan_hdr.first) {
+	    while (chan_hdr.first) del_chan_record(chan_hdr.first, 0);
+	}
+	chan_hdr.first = chan_hdr.end = NULL;
+	chan_hdr.counter = 0;
+
+    ast_mutex_unlock(&chan_lock);
+}
+//------------------------------------------------------------------------
+static s_chan_record *add_chan_record(const char *nchan, const char *caller, const char *ext, void *data)
+{
+int len=0, lg;
+s_chan_record *ret=NULL, *tmp=NULL;
+char *stc=NULL, *ste=NULL, *stcaller=NULL;
+
+    if ((!nchan) || (!caller) || (!ext)) return ret;
+    else
+    if ((!strlen(nchan)) || (!strlen(caller)) || (!strlen(ext))) return ret;
+
+    lg = salara_verbose;
+
+    ast_mutex_lock(&chan_lock);
+
+	s_chan_record *rec = (s_chan_record *)calloc(1,sizeof(s_chan_record));
+	if (rec) {
+	    len = strlen(nchan);
+	    if (len >= AST_CHANNEL_NAME) len = AST_CHANNEL_NAME-1;
+	    stc = (char *)calloc(1,len+1);
+	    if (stc) {
+		memcpy(stc,nchan,len);
+		len = strlen(ext);
+		if (len >= AST_MAX_EXTENSION) len = AST_MAX_EXTENSION-1;
+		ste = (char *)calloc(1,len+1);
+		if (ste) {
+		    memcpy(ste,ext,len);
+		    len = strlen(caller);
+		    if (len >= AST_MAX_EXTENSION) len = AST_MAX_EXTENSION-1;
+		    stcaller = (char *)calloc(1,len+1);
+		    memcpy(stcaller,caller,len);
+		}
+	    }
+	    if ((stc) && (ste) && (stcaller)) {
+		rec->chan = stc;
+		rec->exten = ste;
+		rec->caller = stcaller;
+		rec->ast = data;
+		rec->before = rec->next = NULL;
+		if (chan_hdr.first == NULL) {//first record
+		    chan_hdr.first = chan_hdr.end = rec;
+		} else {//add to tail
+		    tmp = chan_hdr.end;
+		    rec->before = tmp;
+		    chan_hdr.end = rec;
+		    tmp->next = rec;
+		}
+		chan_hdr.counter++;
+		ret=rec;
+	    } else {
+		if (stc) free(stc);
+		if (ste) free(ste);
+		if (stcaller) free(stcaller);
+		free(rec);
+	    }
+	}
+
+	if (lg) {//>2
+	    if (lg>2) ast_verbose("[%s] add_chan : first=%p end=%p counter=%d (chan='%s' ext='%s' caller='%s' ast=%p)\n",
+			AST_MODULE, (void *)chan_hdr.first, (void *)chan_hdr.end, chan_hdr.counter,
+			nchan, ext, caller, data);
+	    if (ret) ast_verbose("[%s] add_chan : rec=%p before=%p next=%p chan='%s' ext='%s' caller='%s' ast=%p\n",
+			AST_MODULE, (void *)ret, (void *)ret->before, (void *)ret->next,
+			ret->chan, ret->exten, ret->caller, ret->ast);
+	}
+
+    ast_mutex_unlock(&chan_lock);
+
+    return ret;
+}
+//------------------------------------------------------------------------
+static int del_chan_record(s_chan_record *rcd, int withlock)
+{
+int ret=-1, lg;
+s_chan_record *bf=NULL, *nx=NULL;
+
+    if (!rcd) return ret;
+
+    lg = salara_verbose;
+
+    if (withlock) ast_mutex_lock(&chan_lock);
+
+	bf = rcd->before;
+	nx = rcd->next;
+	if (bf) {
+	    if (nx) {
+		bf->next = nx;
+		nx->before = bf;
+	    } else {
+		bf->next = NULL;
+		chan_hdr.end = bf;
+	    }
+	} else {
+	    if (nx) {
+		chan_hdr.first = nx;
+		nx->before = NULL;
+	    } else {
+		chan_hdr.first = NULL;
+		chan_hdr.end = NULL;
+	    }
+	}
+	if (chan_hdr.counter>0) chan_hdr.counter--;
+	free(rcd->chan);
+	free(rcd->exten);
+	free(rcd->caller);
+	free(rcd); //rcd = NULL;
+	ret=0;
+
+	if (lg) {//>2
+	    ast_verbose("[%s %s] del_chan : rec=%p first=%p end=%p counter=%d\n",
+			AST_MODULE,
+			TimeNowPrn(),
+			(void *)rcd,
+			(void *)chan_hdr.first,
+			(void *)chan_hdr.end,
+			chan_hdr.counter);
+	}
+
+    if (withlock) ast_mutex_unlock(&chan_lock);
+
+    return ret;
+}
+//------------------------------------------------------------------------
+static s_chan_record *update_chan(const char *nchan, const char *caller, const char *ext)
+{
+int lg;
+s_chan_record *ret=NULL, *temp=NULL, *tmp=NULL;
+char *nc=NULL;
+
+    if ( (!ext) || (!caller) || (!nchan) ) return ret;
+
+    lg = salara_verbose;
+
+    ast_mutex_lock(&chan_lock);
+
+	if (chan_hdr.first) {
+	    tmp = chan_hdr.first;
+	    while (tmp) {
+		if ( (strcmp(tmp->chan, nchan)) && (!strcmp(tmp->exten, ext)) && (!strcmp(tmp->caller, caller)) ) {
+		    if (tmp->chan) free(tmp->chan); tmp->chan=NULL;
+		    nc = (char *)calloc(1, strlen(nchan) + 1);
+		    if (nc) {
+			strcat(nc, nchan);
+			tmp->chan = nc;
+		    }
+		    ret = tmp;
+		    break;
+		} else {
+		    temp = tmp->next;
+		    tmp = temp;
+		}
+	    }
+	}
+
+	if (lg) {//>2
+	    if (ret) ast_verbose("[%s] update_chan : first=%p end=%p counter=%d chan='%s' exten='%s' caller='%s' ast=%p, record found %p\n",
+				AST_MODULE,
+				(void *)chan_hdr.first, (void *)chan_hdr.end, chan_hdr.counter,
+				nchan, ext, caller, ret->ast,
+				(void *)ret);
+	    else
+		if (lg>1) ast_verbose("[%s] update_chan : first=%p end=%p counter=%d chan='%s' exten='%s' caller='%s', record not found\n",
+				AST_MODULE,
+				(void *)chan_hdr.first, (void *)chan_hdr.end, chan_hdr.counter,
+				nchan, ext, caller);
+	}
+
+    ast_mutex_unlock(&chan_lock);
+
+    return ret;
+}
+
+//------------------------------------------------------------------------
+static s_chan_record *find_chan(const char *nchan, const char *caller, const char *ext, int with_del)
+{
+int lg;//, stat;
+s_chan_record *ret=NULL, *temp=NULL, *tmp=NULL;
+
+    if (!ext) return ret;
+
+    lg = salara_verbose;
+
+    ast_mutex_lock(&chan_lock);
+
+	if (chan_hdr.first) {
+	    tmp = chan_hdr.first;
+	    while (tmp) {
+		if ( (!strcmp(tmp->chan, nchan)) && (!strcmp(tmp->exten, ext)) && (!strcmp(tmp->caller, caller)) ) {
+		    ret = tmp;
+		    break;
+		} else {
+		    temp = tmp->next;
+		    tmp = temp;
+		}
+	    }
+	}
+
+	if (lg>2) {//>2
+	    if (ret)
+		ast_verbose("[%s] find_chan : first=%p end=%p counter=%d chan='%s' exten='%s' caller='%s' ast=%p, record found %p\n",
+			AST_MODULE,
+			(void *)chan_hdr.first, (void *)chan_hdr.end, chan_hdr.counter,
+			nchan, ext, caller, ret->ast,
+			(void *)ret);
+	    else
+		ast_verbose("[%s] find_chan : first=%p end=%p counter=%d chan='%s' exten='%s' caller='%s', record not found\n",
+			AST_MODULE,
+			(void *)chan_hdr.first, (void *)chan_hdr.end, chan_hdr.counter,
+			nchan, ext, caller);
+	}
+	if (ret) {
+	    if (ret->ast) {
+		//stat = ast_channel_state((struct ast_channel *)ret->ast); if (stat > MAX_CHAN_STATE-1) stat=MAX_CHAN_STATE-1;
+		if (lg) ast_verbose("[%s %s] find_chan : chan=[%s] exten=[%s] caller=[%s] ast=%p\n",
+			AST_MODULE,
+			TimeNowPrn(),
+			nchan,
+			//ast_channel_name((struct ast_channel *)ret->ast),
+			//stat,
+			//ChanStateName[stat],
+			ext,
+			caller,
+			(void *)ret->ast);
+		//if ( (ast_strlen_zero(ast_channel_name(ret->ast))) ||
+		//	(!stat) ||
+		//	    (stat==7) ) 
+		//del_chan_record(ret, 0);
+	    } else {
+		if (lg) ast_verbose("[%s %s] find_chan : record found at %p, but ast=NULL -> delete record !\n",
+			AST_MODULE, TimeNowPrn(), (void *)ret);
+		//del_chan_record(ret, 0);
+	    }
+	    if (with_del) del_chan_record(ret, 0);
+	}
+
+    ast_mutex_unlock(&chan_lock);
+
+    return ret;
+}
+//------------------------------------------------------------------------
+/*static s_chan_record *find_chan_record(const char *nchan, const char *caller, const char *ext)
+{
+int lg;
+s_chan_record *ret=NULL, *temp=NULL, *tmp=NULL;
+
+    if ((!nchan) || (!ext)) return ret;
+
+    lg = salara_verbose;
+
+    ast_mutex_lock(&chan_lock);
+
+	if (chan_hdr.first) {
+	    tmp = chan_hdr.first;
+	    while (tmp != NULL) {
+		if ( (!strcmp(tmp->chan, nchan)) && (!strcmp(tmp->exten, ext)) && (!strcmp(tmp->caller, caller)) ) {
+		    ret = tmp;
+		    break;
+		} else {
+		    temp = tmp->next;
+		    tmp = temp;
+		}
+	    }
+	}
+	
+	if (lg > 2) {
+	    if (ret)
+		ast_verbose("[%s] find_chan : first=%p end=%p counter=%d chan='%s' exten='%s' caller='%s' %p, record found %p\n",
+			AST_MODULE,
+			(void *)chan_hdr.first,
+			(void *)chan_hdr.end,
+			chan_hdr.counter,
+			ret->chan, ret->exten, ret->caller, ret->ast,
+			(void *)ret);
+	    else
+		ast_verbose("[%s] find_chan : first=%p end=%p counter=%d chan='%s' exten='%s' caller='%s', record not found\n",
+			AST_MODULE,
+			(void *)chan_hdr.first,
+			(void *)chan_hdr.end,
+			chan_hdr.counter,
+			nchan, ext, caller);
+	}
+
+    ast_mutex_unlock(&chan_lock);
+
+    return ret;
+}*/
+//------------------------------------------------------------------------
+/*
+static struct ast_channel *get_chan_record(s_chan_record *rec, int withlock)
+{
+struct ast_channel *ret=NULL;
+
+    if (!rec) return ret;
+
+    if (withlock) ast_mutex_lock(&chan_lock);
+	ret = rec->ast;
+    if (withlock) ast_mutex_unlock(&chan_lock);
+
+    return ret;
+}
+*/
 //------------------------------------------------------------------------
 static int delete_act(s_act_list *arcd, int withlock)
 {
@@ -445,7 +820,7 @@ s_act *str=NULL;
 }
 //---------------------------------------------------------------------
 static int msg_send(char * cmd_line);
-static char *TimeNowPrn();
+
 //---------------------------------------------------------------------
 char *StrUpr(char *st)
 {
@@ -648,115 +1023,6 @@ static void init_records()
     ast_mutex_unlock(&route_lock);
 }
 //------------------------------------------------------------------------
-static void del_list(s_resp_list *lst)
-{
-
-    if (lst) {
-	ast_mutex_lock(&resp_event_lock);
-	    if (lst->body) {
-//ast_verbose("[%s] del_list : body:\n[%s]",AST_MODULE,lst->body);
-		free(lst->body);
-	    }
-	    free(lst);
-	ast_mutex_unlock(&resp_event_lock);
-    }
-    lst = NULL;
-
-    if (salara_verbose>=3) ast_verbose("[%s] del_list : done\n",AST_MODULE);
-
-}
-//------------------------------------------------------------------------
-static s_resp_list *make_list(void)
-{
-s_resp_list *lt = NULL;
-
-    ast_mutex_lock(&resp_event_lock);
-	lt = (s_resp_list *)calloc(1,sizeof(s_resp_list));
-	if (lt) {
-	    lt->body = NULL;
-	    lt->len = 0;
-	    lt->part = 0;
-	    lt->id = -1;
-	}
-    ast_mutex_unlock(&resp_event_lock);
-
-    if (salara_verbose>=3)
-	ast_verbose("[%s] make_list : len=%d part=%d id=%d\n",AST_MODULE, lt->len, lt->part, lt->id);
-
-    return lt;
-}
-//------------------------------------------------------------------------
-static char *copy_list(s_resp_list *lst)
-{
-char *ret = NULL;
-
-    if (lst == NULL) return ret;
-
-    ast_mutex_lock(&resp_event_lock);
-
-	if (lst->len>0) {
-	    ret = (char *)calloc(1, lst->len+1);
-	    if (ret) memcpy(ret, lst->body, lst->len);
-	}
-
-    ast_mutex_unlock(&resp_event_lock);
-
-    return ret;
-}
-//------------------------------------------------------------------------
-static void add_list(s_resp_list *lst, char *st)
-{
-char *tmp_resp = NULL;
-int len, dl, id=Act_ID;
-
-    if ((lst == NULL) || (st == NULL)) goto out;
-    dl = strlen(st); if (!dl) goto out;
-
-    ast_mutex_lock(&resp_event_lock);
-
-	len = dl + lst->len;
-	tmp_resp = (char *)calloc(1, len+1);
-	if (tmp_resp) {
-	    lst->part++;
-	    if (lst->len > 0) memcpy(tmp_resp, (char *)lst->body, lst->len);
-	    memcpy(tmp_resp+lst->len, st, dl);
-	    free(lst->body); lst->body = NULL;
-
-	    len = strlen(tmp_resp);
-	    lst->body = tmp_resp;
-	    lst->len = len;
-	    lst->id = id;
-	}
-
-    ast_mutex_unlock(&resp_event_lock);
-
-out:
-
-    if (salara_verbose>=3)
-	ast_verbose("[%s] add_list : len=%d part=%d id=%d\n",AST_MODULE, lst->len, lst->part, lst->id);
-
-}
-//------------------------------------------------------------------------
-static int strstr_list(s_resp_list *lst, char *st)
-{
-int ret = 0;
-
-    if ((lst == NULL) || (st == NULL)) return ret;
-
-    ast_mutex_lock(&resp_event_lock);
-
-	if (lst->len > 0) {
-	    if (strstr((char *)lst->body, st)) ret=1;
-	}
-
-    ast_mutex_unlock(&resp_event_lock);
-
-    if (salara_verbose>=3)
-	ast_verbose("[%s] strstr_list : ret=%d len=%d part=%d id=%d\n",AST_MODULE, ret, lst->len, lst->part, lst->id);
-
-    return ret;
-
-}
 //------------------------------------------------------------------------
 static char *TimeNowPrn()
 {
@@ -1369,12 +1635,14 @@ static int salara_curlopt_read2(struct ast_channel *chan, const char *ccmd, char
 //----------------------------------------------------------------------
 //----------------------------------------------------------------------
 //----------------------------------------------------------------------
+
 static int hook_callback(int category, const char *event, char *body);
 
 static struct manager_custom_hook hook = {
     .file = __FILE__,
     .helper = hook_callback,
 };
+
 //----------------------------------------------------------------------
 
 //----------------------------------------------------------------------
@@ -1520,12 +1788,61 @@ struct MemoryStruct chunk;
 //----------------------------------------------------------------------
 //----------------------------------------------------------------------
 //----------------------------------------------------------------------
+/*
+static int salara_transfer_exec(struct ast_channel *chan, const char *data, int pr)
+{
+int res, len;
+const char *VarName = "TRANSFERSTATUS";
+const char *S_Good = "SUCCESS";
+const char *S_Fail = "FAILURE";
+const char *S_Unsup = "UNSUPPORTED";
+char *slash, *tech=NULL, *dest=NULL, *parse=NULL;
+void *status=NULL;
+AST_DECLARE_APP_ARGS(args,
+    AST_APP_ARG(dest);
+);
+
+    if (ast_strlen_zero((char *)data)) {
+	if (pr) ast_verbose("[%s] Transfer requires an argument ([Tech/]destination)\n", AST_MODULE);
+	pbx_builtin_setvar_helper(chan, VarName, S_Fail);
+	return -1;
+    } else parse = ast_strdupa(data);
+
+    AST_STANDARD_APP_ARGS(args, parse);
+
+    dest = args.dest;
+
+    if ((slash = strchr(dest, '/')) && (len = (slash - dest))) {
+	tech = dest;
+	dest = slash + 1;
+	// Allow execution only if the Tech/destination agrees with the type of the channel
+	if (strncasecmp(ast_channel_tech(chan)->type, tech, len)) {
+	    pbx_builtin_setvar_helper(chan, VarName, S_Fail);
+	    return -1;
+	}
+    }
+
+    // Check if the channel supports transfer before we try it
+    if (!ast_channel_tech(chan)->transfer) {
+	pbx_builtin_setvar_helper(chan, VarName, S_Unsup);
+	return -1;
+    }
+
+    res = ast_transfer(chan, dest);
+
+    if (res < 0) status = (char *)S_Fail;
+	    else status = (char *)S_Good;
+
+    pbx_builtin_setvar_helper(chan, VarName, (char *)status);
+
+    return res;
+}
+*/
 //----------------------------------------------------------------------
 static int app_salara_exec(struct ast_channel *ast, const char *data)
 {
 int lg;
 int ret_curl=-1, stat=-1, res_transfer;
-char *slash=NULL, *slash2=NULL, *tech=NULL;
 char *cid=NULL, *info=NULL, *buf=NULL;
 unsigned int aid=0;
 s_act_list *abc=NULL;
@@ -1535,6 +1852,8 @@ const char *ccmd = NULL;
 int ssl=0;
 CURLcode er;
 #endif
+struct ast_channel *new_ast=NULL;
+
 
     if (!data) return -1;
     else
@@ -1590,14 +1909,13 @@ CURLcode er;
     aid = MakeAction(2, dest_number, "", "", context);
 
     if (aid>=0) {
-	//usleep(1000);
 	abc = find_act(aid);
 	if (abc) {
 	    stat = abc->act->status;
 	    delete_act(abc,1);
 	}
 	if (!check_stat(stat)) {
-	    if (lg) ast_verbose("[%s] Extension '%s' status (%d) OK !\n", AST_MODULE, dest_number, stat);
+	    if (lg>1) ast_verbose("[%s] Extension '%s' status (%d) OK !\n", AST_MODULE, dest_number, stat);
 	} else {
 	    if (lg) ast_verbose("[%s] Extension '%s' status (%d) BAD !\n", AST_MODULE, dest_number, stat);
 	    memset(dest_number,0,AST_MAX_EXTENSION);
@@ -1607,159 +1925,197 @@ CURLcode er;
 	}
     }
 
-    tech = (char *)ast_strdupa(ast_channel_name(ast));
-    if ((slash = strchr(tech, '/'))) {
-	if ((slash2 = strchr(slash + 1, '/'))) {
-	    *slash2 = '\0';
-	}
-	*slash = '\0';
-    }
 
     res_transfer = ast_transfer(ast, dest_number);
+//    res_transfer = salara_transfer_exec(ast, dest_number, lg);
 
-    if (lg) ast_verbose("[%s] channel: type=[%s] caller=[%s] id=[%s] called=[%s] transfer to '%s' res=%d\n",
+/*
+    int tom=100, rco;
+    struct ast_format_cap *cap = ast_format_cap_alloc(AST_FORMAT_CAP_FLAG_DEFAULT);
+    if (cap) {
+	ast_format_cap_append(cap, ast_format_ulaw, 0);
+	ast_format_cap_append(cap, ast_format_alaw, 0);
+//struct ast_channel *ast_call_forward(struct ast_channel *caller, struct ast_channel *orig, int *timeout, struct ast_format_cap *cap, struct outgoing_helper *oh, int *outstate)
+	new_ast = ast_call_forward(ast, ast, &tom, cap, NULL, &rco);
+	if (!new_ast) ao2_ref(cap, -1);
+    }
+*/
+
+    if (res_transfer>=0) add_chan_record(ast_channel_name(ast), cid, dest_number, (void *)ast);
+
+    if (lg) {
+	stat = ast_channel_state(ast); if (stat > MAX_CHAN_STATE-1) stat=MAX_CHAN_STATE-1;
+	ast_verbose("[%s] CallerID=[%s] called=[%s] transfer to '%s' res=%d status=%d (%s) | new=%p\n",
 		AST_MODULE,
-		tech,
-		cid,
-		ast_channel_name(ast),//ast_channel_uniqueid(ast),
+		ast_channel_name(ast),
 		data,
 		dest_number,
-		res_transfer);
-    if (lg) ast_verbose("[%s %s] application stop.\n", AST_MODULE, TimeNowPrn());
+		res_transfer,
+		stat,
+		ChanStateName[stat],
+		(void *)new_ast);
+	ast_verbose("[%s %s] application stop.\n", AST_MODULE, TimeNowPrn());
+    }
 
     if (buf) free(buf);
 
     return 0;
 }
 //----------------------------------------------------------------------
+/*
+inline static void look_chan(const char *nchan, const char *caller, const char *ext, int pr)
+{
+s_chan_record *rec = find_chan_by_dest(caller, ext);
+
+    if (!rec) {
+	if (pr>=2) ast_verbose("[%s %s] Look_chan : Not found channel with chan=[%s] exten=[%s] caller=[%s]\n",
+			AST_MODULE,
+			TimeNowPrn(),
+			nchan, ext, caller);
+    }
+}
+*/
+//----------------------------------------------------------------------
 static int hook_callback(int category, const char *event, char *body)
 {
-int lg, id=-1, sti=-1, done=0, dl, rdy=0;
-char *uk=NULL, *uk2=NULL;//, *cpy=NULL;
+int lg, id=-1, sti=-1, done=0, dl, rdy=0, tp=-1;
+char *uk=NULL, *uk2=NULL;
 char stx[SIZE_OF_RESP]={0};
 
-    if ( (strstr(event,"RTCP")) || (strstr(event,"Cdr")) ) return 0;
+//    if ( (strstr(event,"RTCP")) || (strstr(event,"Cdr")) ) return 0;
+
+    if (!strcmp(event,"HookResponse")) tp=0;
+    else if (!strcmp(event,"Hangup")) tp=1;
+    else if (!strcmp(event,"Newchannel")) tp=2;
+    else if (!strcmp(event,"Newexten")) tp=3;
+    else if (!strcmp(event,"AgentConnect")) tp=4;
+    else return 0;
 
     lg = salara_verbose;
 
 //    if (lg) ast_verbose("[%s] cat=%d event='%s' body=[\n%s]\n", AST_MODULE, category, event, body);
 //    return 0;
 
-    if (strstr(event,"HookResponse")) {
-//	if (strstr(body,"Response:")) {
-//	    append = 1;
-	//    if (evt_resp) {
-	//	del_list(evt_resp);
-	//	evt_resp=NULL;
-	//    }
-	//    evt_resp = make_list();
-//	}
-//	if (append) {
-	    //if (!strstr(body,"--END COMMAND--")) {
-		if ( (strlen(hook_tmp_str) + strlen(body)) > max_buf_size ) {
-		    if (lg) ast_verbose("<%s>\n<%s>\n",hook_tmp_str,body);
-		    memset(hook_tmp_str,0,max_buf_size);
-		}
-		strcat(hook_tmp_str, body);
-		if (strstr(hook_tmp_str, "\r\n\r\n")) done=1;
-
-	//	add_list(evt_resp, body);
-	//	if (strstr_list(evt_resp, "\r\n\r\n")) {
-	//	    done=1;
-	//	}
-		//if (strstr_list(evt_resp, "Message:")) {
-		//    if (strstr_list(evt_resp, "status will follow") == 0) done=1;
-		//} else if (strstr_list(evt_resp, "ListItems:")) {
-		//    done=1;
-		//} else if (strstr_list(evt_resp, "\r\n\r\n")) {
-		//    done=1;
-		//}
-	    //}
-//	}
-
-	if (done) {
-//	    append=1;
-	    if (console) ast_verbose("%s",hook_tmp_str);
-	    uk = strstr(hook_tmp_str, S_ActionID);
-	    if (uk) {
-		uk += strlen(S_ActionID);
-		uk2 = strstr(uk,"\r\n");
-		if (uk2) {
-		    memset(stx,0,SIZE_OF_RESP);
-		    dl = uk2 - uk; if (dl>=SIZE_OF_RESP) dl = SIZE_OF_RESP-1;
-		    memcpy(stx, uk, dl);
-		    id = atoi(stx);
-		    uk = strstr(hook_tmp_str,S_Status);
-		    if (uk) {
-			uk += strlen(S_Status);
-			uk2 = strstr(uk, "\r\n");
-			if (uk2 == NULL) uk2 = strchr(uk,'\0');
-			if (uk2) {
-			    memset(stx,0,SIZE_OF_RESP);
-			    dl = uk2 - uk; if (dl>=SIZE_OF_RESP) dl = SIZE_OF_RESP-1;
-			    memcpy(stx, uk, dl);
-			    sti = atoi(stx);
-			    uk = strstr(hook_tmp_str, S_StatusText);
-			    if (uk) {
-				uk += strlen(S_StatusText);
-				if (*uk == ' ') uk++;
-				rdy=1;
-			    }
-			}
-		    } else {
-			uk = strstr(hook_tmp_str,S_PeerStatus);
-			if (uk) {
-			    uk += strlen(S_PeerStatus);
-			    if (*uk == ' ') uk++;
-			    sti=0; rdy=1;
-			} else {
-			    uk = strstr(hook_tmp_str, S_ResponseF);
-			    if (uk) {
-				uk = strstr(hook_tmp_str, S_State);
-				if (uk) {
-				    uk += strlen(S_State);
-				    if (*uk == ' ') uk++;
-				    sti=0;
-				} else {
-				    uk = S_ChanOff;
-				    sti=-1;
-				}
-				rdy=1;
-			    } else {
-				uk = strstr(hook_tmp_str, S_Response);
-				if (uk) {
-				    uk += strlen(S_Response);
-				    if (*uk == ' ') uk++;
-				    sti=-1; if (strstr(uk, S_Success)) sti=0;
-				    rdy=1;
-				}
-			    }
-			}
-		    }
-		    if (rdy) {
-			uk2 = strchr(uk, '\n');
-			if (uk2) { 
-			    if (*(uk2-1) == '\r') uk2--;
-			} else uk2 = strchr(uk,'\0');
-			if (uk2) {
-			    memset(stx,0,SIZE_OF_RESP);
-			    dl = uk2 - uk; if (dl>=SIZE_OF_RESP) dl = SIZE_OF_RESP-1;
-			    memcpy(stx, uk, dl);
-			    if (update_act_by_index(id, sti, stx))
-				if (lg>=2) ast_verbose("[hook] event='%s' action_id=%d not found in act_list\n", event, id);
-			}
-		    }
-		}
-	    } else if (lg) ast_verbose("[%s] event='%s' ActionID not found\n", AST_MODULE, event);
-
-	    if ((lg>=2) && (!console)) ast_verbose("[%s] event='%s' body=[\n%s]\n",AST_MODULE,event,hook_tmp_str);
-	    //del_list(evt_resp); evt_resp=NULL;
-	
-	    memset(hook_tmp_str,0,max_buf_size);
-	}
-    } else {
-	if (lg>=2) ast_verbose("[%s] event='%s' body=[\n%s\n]\n", AST_MODULE, event, body);
+    if ( (strlen(hook_tmp_str) + strlen(body)) > max_buf_size ) {
+	if (lg) ast_verbose("<%s>\n<%s>\n",hook_tmp_str,body);
+	memset(hook_tmp_str,0,max_buf_size);
     }
+    strcat(hook_tmp_str, body);
+    if (strstr(hook_tmp_str, "\r\n\r\n")) done=1;
+
+    if (done) {
+	switch (tp) {
+	    case 0 ://HookResponse
+		if (console) ast_verbose("%s",hook_tmp_str);
+		uk = strstr(hook_tmp_str, S_ActionID);
+		if (uk) {
+		    uk += strlen(S_ActionID); uk2 = strstr(uk,"\r\n");
+		    if (uk2) {
+			memset(stx,0,SIZE_OF_RESP); dl = uk2 - uk; if (dl>=SIZE_OF_RESP) dl = SIZE_OF_RESP-1;
+			memcpy(stx, uk, dl); id = atoi(stx); uk = strstr(hook_tmp_str,S_Status);
+			if (uk) {
+			    uk += strlen(S_Status); uk2 = strstr(uk, "\r\n"); if (uk2 == NULL) uk2 = strchr(uk,'\0');
+			    if (uk2) {
+				memset(stx,0,SIZE_OF_RESP); dl = uk2 - uk; if (dl>=SIZE_OF_RESP) dl = SIZE_OF_RESP-1;
+				memcpy(stx, uk, dl); sti = atoi(stx); uk = strstr(hook_tmp_str, S_StatusText);
+				if (uk) { uk += strlen(S_StatusText); if (*uk == ' ') uk++; rdy=1; }
+			    }
+			} else {
+			    uk = strstr(hook_tmp_str,S_PeerStatus);
+			    if (uk) {
+				uk += strlen(S_PeerStatus); if (*uk == ' ') uk++; sti=0; rdy=1;
+			    } else {
+				uk = strstr(hook_tmp_str, S_ResponseF);
+				if (uk) {
+				    uk = strstr(hook_tmp_str, S_State);
+				    if (uk) { uk += strlen(S_State); if (*uk == ' ') uk++; sti=0; } 
+				       else { uk = S_ChanOff; sti=-1; }
+				    rdy=1;
+				} else {
+				    uk = strstr(hook_tmp_str, S_Response);
+				    if (uk) {
+					uk += strlen(S_Response);
+					if (*uk == ' ') uk++; sti=-1; if (strstr(uk, S_Success)) sti=0; rdy=1;
+				    }
+				}
+			    }
+			}
+			if (rdy) {
+			    uk2 = strchr(uk, '\n'); if (uk2) { if (*(uk2-1) == '\r') uk2--; } else uk2 = strchr(uk,'\0');
+			    if (uk2) {
+				memset(stx,0,SIZE_OF_RESP); dl = uk2 - uk; if (dl>=SIZE_OF_RESP) dl = SIZE_OF_RESP-1; memcpy(stx, uk, dl);
+				if (update_act_by_index(id, sti, stx)) if (lg>=2) ast_verbose("[hook] event='%s' action_id=%d not found in act_list\n", event, id);
+			    }
+			}
+		    }
+		} else if (lg) ast_verbose("[%s] event='%s' ActionID not found\n", AST_MODULE, event);
+	    break;
+	    case 1://Hangup
+	    case 2://Newchannel
+	    case 3://Newexten
+		if (lg>1) ast_verbose("%s",hook_tmp_str);
+		int cs=100;
+		char chan[AST_CHANNEL_NAME]; char exten[AST_MAX_EXTENSION]; 
+		char caller[AST_MAX_EXTENSION]; char chan_state[AST_MAX_EXTENSION]; char app[AST_MAX_EXTENSION];
+		memset(chan,0,AST_CHANNEL_NAME); memset(exten,0,AST_MAX_EXTENSION);
+		memset(caller,0,AST_MAX_EXTENSION); memset(chan_state,0,AST_MAX_EXTENSION); memset(app,0,AST_MAX_EXTENSION);
+		uk = strstr(hook_tmp_str, S_Channel);
+		if (uk) {
+		    uk += strlen(S_Channel); if (*uk == ' ') uk++; uk2 = strstr(uk,"\r\n");
+		    if (uk2) {
+			dl = uk2 - uk; if (dl >= AST_CHANNEL_NAME) dl=AST_CHANNEL_NAME-1; memcpy(chan, uk, dl);
+		    }
+		}
+		uk = strstr(hook_tmp_str, S_Exten);
+		if (uk) {
+		    uk += strlen(S_Exten); if (*uk == ' ') uk++; uk2 = strstr(uk,"\r\n");
+		    if (uk2) {
+			dl = uk2 - uk; if (dl >= AST_MAX_EXTENSION) dl=AST_MAX_EXTENSION-1; memcpy(exten, uk, dl);
+		    }
+		}
+		uk = strstr(hook_tmp_str, S_CallerIDNum);
+		if (uk) {
+		    uk += strlen(S_CallerIDNum); if (*uk == ' ') uk++; uk2 = strstr(uk,"\r\n");
+		    if (uk2) {
+			dl = uk2 - uk; if (dl >= AST_MAX_EXTENSION) dl=AST_MAX_EXTENSION-1; memcpy(caller, uk, dl);
+		    }
+		}
+		uk = strstr(hook_tmp_str, S_ChannelState);
+		if (uk) {
+		    uk += strlen(S_ChannelState); if (*uk == ' ') uk++; uk2 = strstr(uk,"\r\n");
+		    if (uk2) {
+			dl = uk2 - uk; if (dl >= AST_MAX_EXTENSION) dl=AST_MAX_EXTENSION-1; 
+			memcpy(chan_state, uk, dl); cs = atoi(chan_state);
+			if ((cs<0) || (cs>=MAX_CHAN_STATE)) cs = MAX_CHAN_STATE-1;
+		    }
+		}
+		uk = strstr(hook_tmp_str, S_Application);
+		if (uk) {
+		    uk += strlen(S_Application); if (*uk == ' ') uk++; uk2 = strstr(uk,"\r\n");
+		    if (uk2) {
+			dl = uk2 - uk; if (dl >= AST_MAX_EXTENSION) dl=AST_MAX_EXTENSION-1;
+			memcpy(app, uk, dl);
+		    }
+		}
+		if (lg) ast_verbose("[%s %s] '%s' event : chan='%s' exten='%s' caller='%s' state=%d(%s) app='%s'\n",
+				AST_MODULE, TimeNowPrn(), event, chan, exten, caller, cs, ChanStateName[cs], app);
+		if (tp==1) {//Hangup
+		    if ( (strlen(chan)) && (strlen(exten)) && (strlen(caller)) ) find_chan(chan, caller, exten, 1);
+		} else if (tp==2) {//Newchannel
+		    if ( (strlen(chan)) && (strlen(exten)) && (strlen(caller)) ) update_chan(chan, caller, exten);
+		} else {//Newexten
+		    //if (lg) ast_verbose("%s",hook_tmp_str);
+		}
+	    break;
+	    case 4://AgentConnect
+		if (lg) ast_verbose("%s",hook_tmp_str);
+	    break;
+		default : if (lg) ast_verbose("[%s] Unknown event='%s' body=[\n%s]\n",AST_MODULE,event,hook_tmp_str);
+	}//switch
+
+	if ((lg>=2) && (!console)) ast_verbose("[%s] event='%s' body=[\n%s]\n",AST_MODULE,event,hook_tmp_str);
+	memset(hook_tmp_str,0,max_buf_size);
+    }//if (done)
 
     return 0;
 }
@@ -2080,7 +2436,6 @@ char *buf=NULL;
 
 		//sprintf(buf,"Action: Status\nChannel: %s\nActionID: %u\n\n", a->argv[4], act);
 		sprintf(buf,"Action: Command\nCommand: core show channel %s\nActionID: %u\n\n",a->argv[4],act);
-		//core show channel SIP/8003-00000000
 		ast_cli(a->fd, "%s", buf);
 		console=1;
 		msg_send(buf);
@@ -2793,8 +3148,14 @@ char *ustart=NULL, *uk_body=NULL;
 					    len = uke-uks; if (len >= AST_MAX_EXTENSION) len=AST_MAX_EXTENSION-1;
 					    switch (i) {
 						case 0: memcpy(operator, uks, len); break;
-						case 1: memcpy(phone, uks, len); break;
-						case 2: memcpy(msg, uks, len); break;
+						case 1:
+						    memcpy(phone, uks, len);
+						    req_type = 0;//make call
+						break;
+						case 2:
+						    memcpy(msg, uks, len);
+						    req_type = 1;//send message
+						break;
 					    }
 					}
 				    }
@@ -2877,8 +3238,14 @@ char *ustart=NULL, *uk_body=NULL;
 						    len = uke-uks; if (len >= AST_MAX_EXTENSION) len=AST_MAX_EXTENSION-1;
 						    switch (i) {
 							case 0: memcpy(operator, uks, len); break;
-							case 1: memcpy(phone, uks, len); break;
-							case 2: memcpy(msg, uks, len); break;
+							case 1:
+							    memcpy(phone, uks, len);
+							    req_type = 0;//make call
+							break;
+							case 2:
+							    memcpy(msg, uks, len);
+							    req_type = 1;//send message
+							break;
 						    }
 						}
 					    }
@@ -3066,15 +3433,45 @@ s_act_list *abc = NULL;
 //----------------------------------------------------------------------
 static void periodics(void *data)
 {
-struct ast_tcptls_session_args *desc = data;
+//struct ast_tcptls_session_args *desc = data;
+int cnt, stat=100, lg = salara_verbose;
+struct ast_channel *ast=NULL;
+s_chan_record *tmp=NULL, *rec=NULL;
+char *name="";
 
-    srv_time_cnt++;
-    if (!(srv_time_cnt & 0x3))
-	ast_verbose("[%s] !!! Periodics : cnt=%d session=%p sock=%d !!!\n",
-		AST_MODULE,
-		srv_time_cnt,
-		(void *)data,
-		desc->accept_fd);
+    if (ast_mutex_trylock(&chan_lock)) {
+	if (lg) ast_verbose("[%s %s] Periodics : trylock not success !!!\n", AST_MODULE, TimeNowPrn());
+	return;
+    }
+
+    cnt = chan_hdr.counter;
+    if (cnt>0) {
+	rec = chan_hdr.first;
+	while ((rec) && (cnt>0)) {
+	    ast = (struct ast_channel *)rec->ast;
+	    if (ast) {
+		//ast_channel_lock(ast);
+		    stat = ast_channel_state(ast);
+		    name = strdupa(ast_channel_name(ast));
+		//ast_channel_unlock(ast);
+		if (stat > MAX_CHAN_STATE-1) stat=MAX_CHAN_STATE-1;
+		if (lg) ast_verbose("[%s] Periodics : total=%d channel=[%s] status=%d (%s) ast=%p\n",
+			    AST_MODULE,
+			    cnt,
+			    name,
+			    stat,
+			    ChanStateName[stat],
+			    (void *)ast);
+		if ((!strlen(name)) && (dirty)) {
+		    del_chan_record(rec, 0);
+		}
+	    }
+	    tmp = rec->next;
+	    rec = tmp;
+	    cnt--;
+	}
+    }
+    ast_mutex_unlock(&chan_lock);
 
 }
 //----------------------------------------------------------------------
@@ -3082,8 +3479,8 @@ static struct ast_tcptls_session_args sami_desc = {
     .accept_fd = -1,
     .master = AST_PTHREADT_NULL,
     .tls_cfg = NULL,
-    .poll_timeout = 5000,	// wake up every 5 seconds
-    .periodic_fn = NULL,	//periodics,//purge_old_stuff,
+    .poll_timeout = 10000,	// wake up every 5 seconds
+    .periodic_fn = NULL,//periodics,//purge_old_stuff,
     .name = "Salara server",
     .accept_fn = srv_nitka,	//tcptls_server_root,	// thread doing the accept()
     .worker_fn = cli_rest_close,//session_do,	// thread handling the session
@@ -3108,9 +3505,9 @@ int res=0;
 
 	delete_act_list();
 
-	remove_records();
+	remove_chan_records();
 
-	del_list(evt_resp);
+	remove_records();
 
 	if (salara_cli_registered) ast_cli_unregister_multiple(cli_salara, ARRAY_LEN(cli_salara));
 
@@ -3159,7 +3556,7 @@ struct ast_sockaddr sami_desc_local_address_tmp;
 #endif
 
     gettimeofday(&salara_start_time, NULL);
-    evt_resp = NULL;
+
     memset(dest_number,0,AST_MAX_EXTENSION);
     strcpy(dest_number, DEF_DEST_NUMBER);
 
@@ -3172,6 +3569,8 @@ struct ast_sockaddr sami_desc_local_address_tmp;
 	init_act_list();
 
 	init_records();
+	
+	init_chan_records();
 
 	if (ast_register_atexit(salara_atexit) < 0) {
 	    salara_atexit_registered = 0;
