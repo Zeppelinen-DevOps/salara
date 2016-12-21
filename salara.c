@@ -33,7 +33,8 @@
 #define AST_MODULE "salara"
 #define AST_MODULE_DESC "Features : transfer call; make call; get status: exten., peer, channel; send [command, message]"
 #define DEF_DEST_NUMBER "1234"
-#define SALARA_VERSION "2.6"//20.12.2016
+#define SALARA_VERSION "2.7"//21.12.2016
+//"2.6"//20.12.2016
 //"2.5"//18.12.2016
 //"2.4"//17.12.2016
 //"2.3"//16.12.2016
@@ -2377,6 +2378,7 @@ unsigned char i;
 	ast_cli(a->fd, "\t-- default routing dest '%s'\n", dest_number);
 	ast_cli(a->fd, "\t-- rest server listen on: '%s'\n", rest_server);
 	ast_cli(a->fd, "\t-- default url '%s'\n", dest_url);
+	ast_cli(a->fd, "\t-- default url_event '%s'\n", dest_url_event);
 	ast_cli(a->fd, "\t-- curl timeout %d\n", SALARA_CURLOPT_TIMEOUT);
 	ast_cli(a->fd, "\t-- default context: %s\n", context);
 	ast_cli(a->fd, "\t-- module version: %s\n", SALARA_VERSION);
@@ -3016,6 +3018,14 @@ char *_begin=NULL, *uk=NULL, *uki=NULL, *uks=NULL;
 										uki += 12;
 										memset(&names_rest[6][0],0,PATH_MAX);
 										strcpy(&names_rest[6][0], uki);
+									    } else{
+										uki = strstr(buf,"dest_url_event=");
+										if (uki) {
+										    //ast_verbose("\tread_config: dest_url_event:%s\n",buf);
+										    uks = strchr(buf,'\n'); if (uks) *uks = '\0';
+										    uki += 15;
+										    sprintf(dest_url_event,"%s",uki);
+										}
 									    }
 									}
 								    }
@@ -3109,6 +3119,7 @@ s_route_record *rt=NULL, *nx=NULL;
     if (!strlen(rest_server)) strcpy(rest_server, DEFAULT_SRV_ADDR);
     len += fprintf(fp, "rest_server=%s\n", rest_server);
     len += fprintf(fp, "dest_url=%s\n", dest_url);
+    len += fprintf(fp, "dest_url_event=%s\n", dest_url_event);
     len += fprintf(fp, "good_status=0,4\n");
     len += fprintf(fp, FORMAT_SEPARATOR_LINE);
 
