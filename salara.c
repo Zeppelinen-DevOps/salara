@@ -33,7 +33,8 @@
 #define AST_MODULE "salara"
 #define AST_MODULE_DESC "Features : transfer call; make call; get status: exten., peer, channel; send [command, message]"
 #define DEF_DEST_NUMBER "1234"
-#define SALARA_VERSION "2.5"//18.12.2016
+#define SALARA_VERSION "2.6"//20.12.2016
+//"2.5"//18.12.2016
 //"2.4"//17.12.2016
 //"2.3"//16.12.2016
 //"2.2"//14.12.2016
@@ -58,6 +59,7 @@
 #define max_buf_size 2048
 
 #define MAX_CHAN_STATE 11
+#define MAX_EVENT_NAME 5
 //------------------------------------------------------------------------
 
 ASTERISK_FILE_VERSION(__FILE__, "$Revision: $");
@@ -81,7 +83,25 @@ typedef struct {
     int id;
 } s_resp_list;
 */
+//------------------  send chan_event by hangup  -----------------------
+typedef struct {
+    int type;
+    char *chan;//[AST_CHANNEL_NAME];
+    char *exten;//[AST_MAX_EXTENSION];
+    char *caller;//[AST_MAX_EXTENSION];
+} s_chan_event;
+//                     chan_event list
+typedef struct self_evt {
+    struct self_evt * before;
+    struct self_evt * next;
+    s_chan_event *event;
+} s_event_list;
 
+typedef struct {
+    struct self_evt * first;
+    struct self_evt * end;
+    unsigned int counter;
+} s_event_hdr;
 //------------------  for List of channel_name  -----------------------
 typedef struct self {
     struct self * before;
@@ -131,6 +151,7 @@ typedef struct {
     unsigned int counter;
 } s_act_hdr;
 //------------------------------------------------------------------------
+static s_event_hdr event_hdr = {NULL,NULL,0};
 
 static s_chan_hdr chan_hdr = {NULL,NULL,0};
 
@@ -139,8 +160,13 @@ static s_act_hdr act_hdr = {NULL,NULL,0};
 static char hook_tmp_str[max_buf_size]={0};
 
 static int reload=0;
+static int unload=0;
 static unsigned char console = 0;
 static unsigned char dirty=1;//clear lost chan_records
+static unsigned char start_http_nitka = 0;
+static unsigned char stop_http_nitka = 0;
+static pthread_t http_tid;
+static pthread_attr_t threadAttr;
 
 static int salara_atexit_registered = 0;
 static int salara_cli_registered = 0;
@@ -154,6 +180,7 @@ static char *app_salara_description = "Salara transfer call function";
 static char dest_number[AST_MAX_EXTENSION] = "00";
 
 static char dest_url[PATH_MAX] = "https://localhost:3000/call_center/incoming_call/check_is_org_only?phone=";
+static char dest_url_event[PATH_MAX] = "http://localhost:5050";
 
 static char rest_server[PATH_MAX] = {0};
 
@@ -215,6 +242,9 @@ static const char *ChanStateName[MAX_CHAN_STATE] = {
 "PRERING",		/*!< Channel has detected an incoming call and is waiting for ring */
 "UNKNOWN"};
 
+static const char *EventName[MAX_EVENT_NAME] = {
+"HookResponse", "Hangup", "Newchannel", "Newexten", "AgentConnect"};
+
 AST_MUTEX_DEFINE_STATIC(salara_lock);//global mutex
 
 AST_MUTEX_DEFINE_STATIC(resp_event_lock);//event_list mutex
@@ -226,6 +256,8 @@ AST_MUTEX_DEFINE_STATIC(act_lock);//actionID mutex
 AST_MUTEX_DEFINE_STATIC(status_lock);//actionID mutex
 
 AST_MUTEX_DEFINE_STATIC(chan_lock);//chan_list mutex
+
+AST_MUTEX_DEFINE_STATIC(event_lock);//event_list mutex
 
 /*********************************************************************************
 unsigned int get_timer_sec(unsigned int t)
@@ -244,7 +276,187 @@ static s_chan_record *add_chan_record(const char *nchan, const char *caller, con
 static int del_chan_record(s_chan_record *rcd, int withlock);
 static s_chan_record *update_chan(const char *nchan, const char *caller, const char *ext);
 static s_chan_record *find_chan(const char *nchan, const char *caller, const char *ext, int with_del);
-//static void *get_chan_record(s_chan_record *rec, int withlock);
+static void *send_by_event(void *arg);
+//------------------------------------------------------------------------
+inline static s_chan_event *make_chan_event(int type, const char *nchan, const char *caller, const char *exten)
+{
+s_chan_event *ret=NULL, *evt=NULL;
+char *tmp_chan=NULL, *tmp_caller=NULL, *tmp_exten=NULL;
+int err=1, lg = salara_verbose;
+
+    if ((!nchan) || (!caller) || (!exten)) return ret;
+
+    evt = (s_chan_event *)calloc(1, sizeof(s_chan_event));
+    if (evt) {
+	evt->type = type;
+	evt->chan = NULL;
+	evt->exten = NULL;
+	evt->caller = NULL;
+	tmp_chan = (char *)calloc(1,strlen(nchan)+1);
+	if (tmp_chan) {
+	    memcpy(tmp_chan, nchan, strlen(nchan));
+	    evt->chan = tmp_chan;
+	    tmp_exten = (char *)calloc(1,strlen(exten)+1);
+	    if (tmp_exten) {
+		memcpy(tmp_exten, exten, strlen(exten));
+		evt->exten = tmp_exten;
+		tmp_caller = (char *)calloc(1,strlen(caller)+1);
+		if (tmp_caller) {
+		    memcpy(tmp_caller, caller, strlen(caller));
+		    evt->caller = tmp_caller;
+		    err=0;
+		}
+	    }
+	}
+	if (!err) ret = evt;
+	else {
+	    if (evt->chan) free(evt->chan);
+	    if (evt->exten) free(evt->exten);
+	    if (evt->caller) free(evt->caller);
+	}
+    }
+
+    if (ret)
+	if (lg>1) ast_verbose("[%s %s] make_chan_event : ret=%p\n", AST_MODULE, TimeNowPrn(), (void *)ret);
+
+    return ret;
+
+}
+//------------------------------------------------------------------------
+static int rm_chan_event(s_chan_event *evt)
+{
+int lg = salara_verbose;
+
+    if (!evt) return 0;
+
+    if (evt->chan) free(evt->chan);
+    if (evt->exten) free(evt->exten);
+    if (evt->caller) free(evt->caller);
+
+    free(evt);
+
+    if (lg>1) ast_verbose("[%s %s] rm_chan_event : ret=%p\n", AST_MODULE, TimeNowPrn(), (void *)evt);
+
+    return 0;
+
+}
+//------------------------------------------------------------------------
+static s_event_list *add_event_list(s_chan_event *evt)
+{
+s_event_list *ret=NULL, *rec=NULL, *tmp=NULL;
+
+    if (!evt) return ret;
+
+    int lg = salara_verbose;
+
+    ast_mutex_lock(&event_lock);
+
+	rec = (s_event_list *)calloc(1,sizeof(s_event_list));
+	if (rec) {
+	    rec->event = evt;
+	    rec->before = rec->next = NULL;
+	    if (event_hdr.first == NULL) {//first record
+		event_hdr.first = event_hdr.end = rec;
+	    } else {//add to tail
+		tmp = event_hdr.end;
+		rec->before = tmp;
+		event_hdr.end = rec;
+		tmp->next = rec;
+	    }
+	    event_hdr.counter++;
+	    ret=rec;
+	}
+
+	if (lg>1) {
+	    if (ret) ast_verbose("[%s %s] add_event_list (%d) : rec=%p before=%p next=%p\n\t-- type=%d chan='%s' exten='%s' caller='%s'\n",
+			AST_MODULE, TimeNowPrn(),
+			event_hdr.counter, (void *)ret,
+			(void *)ret->before,
+			(void *)ret->next,
+			ret->event->type,
+			ret->event->chan,
+			ret->event->exten,
+			ret->event->caller);
+	    else ast_verbose("[%s %s] add_event_list (%d) : Error -> rec=%p\n", AST_MODULE, TimeNowPrn(), event_hdr.counter, (void *)ret);
+	}
+
+    ast_mutex_unlock(&event_lock);
+
+    return ret;
+}
+//------------------------------------------------------------------------
+static int del_event_list(s_event_list *rcd, int withlock)
+{
+int ret=-1, lg;
+s_event_list *bf=NULL, *nx=NULL;
+
+    if (!rcd) return ret;
+
+    lg = salara_verbose;
+
+    if (withlock) ast_mutex_lock(&event_lock);
+
+	bf = rcd->before;
+	nx = rcd->next;
+	if (bf) {
+	    if (nx) {
+		bf->next = nx;
+		nx->before = bf;
+	    } else {
+		bf->next = NULL;
+		event_hdr.end = bf;
+	    }
+	} else {
+	    if (nx) {
+		event_hdr.first = nx;
+		nx->before = NULL;
+	    } else {
+		event_hdr.first = NULL;
+		event_hdr.end = NULL;
+	    }
+	}
+	rm_chan_event(rcd->event);
+	if (event_hdr.counter>0) event_hdr.counter--;
+	free(rcd); rcd = NULL;
+	ret=0;
+
+	if (lg) {
+	    if ((unload) || (lg>1))
+		ast_verbose("[%s %s] del_event_list : first=%p end=%p counter=%d\n",
+			AST_MODULE, TimeNowPrn(),
+			(void *)event_hdr.first,
+			(void *)event_hdr.end,
+			event_hdr.counter);
+	}
+
+    if (withlock) ast_mutex_unlock(&event_lock);
+
+    return ret;
+}
+//------------------------------------------------------------------------
+static void remove_event_list()
+{
+    ast_mutex_lock(&event_lock);
+
+	while (event_hdr.first) {
+	    del_event_list(event_hdr.first, 0);
+	}
+
+    ast_mutex_unlock(&event_lock);
+}
+//------------------------------------------------------------------------
+static void init_event_list()
+{
+    ast_mutex_lock(&event_lock);
+
+	if (event_hdr.first) {
+	    while (event_hdr.first) del_event_list(event_hdr.first, 0);
+	}
+	event_hdr.first = event_hdr.end = NULL;
+	event_hdr.counter = 0;
+
+    ast_mutex_unlock(&event_lock);
+}
 //------------------------------------------------------------------------
 static void remove_chan_records()
 {
@@ -326,7 +538,7 @@ char *stc=NULL, *ste=NULL, *stcaller=NULL;
 	    }
 	}
 
-	if (lg) {//>2
+	if (lg>1) {//>2
 	    if (lg>2) ast_verbose("[%s] add_chan : first=%p end=%p counter=%d (chan='%s' ext='%s' caller='%s' ast=%p)\n",
 			AST_MODULE, (void *)chan_hdr.first, (void *)chan_hdr.end, chan_hdr.counter,
 			nchan, ext, caller, data);
@@ -377,7 +589,7 @@ s_chan_record *bf=NULL, *nx=NULL;
 	free(rcd); //rcd = NULL;
 	ret=0;
 
-	if (lg) {//>2
+	if (lg>1) {//>2
 	    ast_verbose("[%s %s] del_chan : rec=%p first=%p end=%p counter=%d\n",
 			AST_MODULE,
 			TimeNowPrn(),
@@ -423,14 +635,14 @@ char *nc=NULL;
 	    }
 	}
 
-	if (lg) {//>2
+	if (lg>1) {//>2
 	    if (ret) ast_verbose("[%s] update_chan : first=%p end=%p counter=%d chan='%s' exten='%s' caller='%s' ast=%p, record found %p\n",
 				AST_MODULE,
 				(void *)chan_hdr.first, (void *)chan_hdr.end, chan_hdr.counter,
 				nchan, ext, caller, ret->ast,
 				(void *)ret);
 	    else
-		if (lg>1) ast_verbose("[%s] update_chan : first=%p end=%p counter=%d chan='%s' exten='%s' caller='%s', record not found\n",
+		ast_verbose("[%s] update_chan : first=%p end=%p counter=%d chan='%s' exten='%s' caller='%s', record not found\n",
 				AST_MODULE,
 				(void *)chan_hdr.first, (void *)chan_hdr.end, chan_hdr.counter,
 				nchan, ext, caller);
@@ -482,7 +694,7 @@ s_chan_record *ret=NULL, *temp=NULL, *tmp=NULL;
 	if (ret) {
 	    if (ret->ast) {
 		//stat = ast_channel_state((struct ast_channel *)ret->ast); if (stat > MAX_CHAN_STATE-1) stat=MAX_CHAN_STATE-1;
-		if (lg) ast_verbose("[%s %s] find_chan : chan=[%s] exten=[%s] caller=[%s] ast=%p\n",
+		if (lg>1) ast_verbose("[%s %s] find_chan : chan=[%s] exten=[%s] caller=[%s] ast=%p\n",
 			AST_MODULE,
 			TimeNowPrn(),
 			nchan,
@@ -1068,6 +1280,8 @@ static int read_config(const char * file_name, int prn);
 static int write_config(const char * file_name, int prn);
 static int check_dest(char *from, char *to);
 static int MakeAction(int type, char *from, char *to, char *mess, char *ctext);
+static int send_to_crm(s_chan_event *evt);
+static int send_curl_event(char *url, char *body, int wait, char *str, int str_len, CURLcode *err, int crt, int prn);
 //----------------------------------------------------------------------
 //----------------------------------------------------------------------
 //----------------------------------------------------------------------
@@ -1654,6 +1868,7 @@ static char *cli_salara_get_status_exten(struct ast_cli_entry *e, int cmd, struc
 static char *cli_salara_get_status_chan(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a);
 static char *cli_salara_get_status_peer(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a);
 static char *cli_salara_send_msg(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a);
+static char *cli_salara_send_post(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a);
 
 static struct ast_cli_entry cli_salara[] = {
     AST_CLI_DEFINE(cli_salara_info, "Show Salara module information/configuration/route"),
@@ -1664,9 +1879,25 @@ static struct ast_cli_entry cli_salara[] = {
     AST_CLI_DEFINE(cli_salara_get_status_chan, "Get channel status"),
     AST_CLI_DEFINE(cli_salara_get_status_peer, "Get peer status"),
     AST_CLI_DEFINE(cli_salara_send_msg, "Send AMI Message"),
+    AST_CLI_DEFINE(cli_salara_send_post, "Send POST request to http server"),
 };
 //----------------------------------------------------------------------
 static size_t WrMemCallBackFunc(void *contents, size_t size, size_t nmemb, void *userp)
+{
+size_t realsize = size *nmemb;
+struct MemoryStruct *mem = (struct MemoryStruct *)userp;
+
+    mem->memory = (char *)realloc(mem->memory, mem->size + realsize + 1);
+    if (mem->memory == NULL) return 0;
+
+    memcpy(&(mem->memory[mem->size]), contents, realsize);
+    mem->size += realsize;
+    mem->memory[mem->size] = 0;
+
+    return realsize;
+}
+//----------------------------------------------------------------------
+static size_t WrMemEventCallBackFunc(void *contents, size_t size, size_t nmemb, void *userp)
 {
 size_t realsize = size *nmemb;
 struct MemoryStruct *mem = (struct MemoryStruct *)userp;
@@ -1750,15 +1981,15 @@ struct MemoryStruct chunk;
 
     chunk.memory = (char *)malloc(1);
     chunk.size = 0;
-
-//    curl_global_init(CURL_GLOBAL_ALL);
-
+/**/
+    curl_global_init(CURL_GLOBAL_ALL);
+/**/
     curl = curl_easy_init();
     if (curl) {
 	struct curl_slist *headers=NULL;
 	headers = curl_slist_append(headers, "Content-Type: application/x-www-form-urlencoded");
 	curl_easy_setopt(curl, CURLOPT_URL, url);
-	//curl_easy_setopt(curl, CURLOPT_POSTFIELDS, req);
+	//if (body) curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
 	if (crt) {//disable certificates
 	    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0);
 	    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0);
@@ -1778,7 +2009,9 @@ struct MemoryStruct chunk;
 	curl_slist_free_all(headers);
 	curl_easy_cleanup(curl);
 	free(chunk.memory);
-//	curl_global_cleanup();
+/**/
+	curl_global_cleanup();
+/**/
     }
 
     return ret;
@@ -1852,7 +2085,7 @@ const char *ccmd = NULL;
 int ssl=0;
 CURLcode er;
 #endif
-struct ast_channel *new_ast=NULL;
+//struct ast_channel *new_ast=NULL;
 
 
     if (!data) return -1;
@@ -1929,31 +2162,18 @@ struct ast_channel *new_ast=NULL;
     res_transfer = ast_transfer(ast, dest_number);
 //    res_transfer = salara_transfer_exec(ast, dest_number, lg);
 
-/*
-    int tom=100, rco;
-    struct ast_format_cap *cap = ast_format_cap_alloc(AST_FORMAT_CAP_FLAG_DEFAULT);
-    if (cap) {
-	ast_format_cap_append(cap, ast_format_ulaw, 0);
-	ast_format_cap_append(cap, ast_format_alaw, 0);
-//struct ast_channel *ast_call_forward(struct ast_channel *caller, struct ast_channel *orig, int *timeout, struct ast_format_cap *cap, struct outgoing_helper *oh, int *outstate)
-	new_ast = ast_call_forward(ast, ast, &tom, cap, NULL, &rco);
-	if (!new_ast) ao2_ref(cap, -1);
-    }
-*/
-
     if (res_transfer>=0) add_chan_record(ast_channel_name(ast), cid, dest_number, (void *)ast);
 
     if (lg) {
 	stat = ast_channel_state(ast); if (stat > MAX_CHAN_STATE-1) stat=MAX_CHAN_STATE-1;
-	ast_verbose("[%s] CallerID=[%s] called=[%s] transfer to '%s' res=%d status=%d (%s) | new=%p\n",
+	ast_verbose("[%s] CallerID=[%s] called=[%s] transfer to '%s' res=%d status=%d (%s)\n",
 		AST_MODULE,
 		ast_channel_name(ast),
 		data,
 		dest_number,
 		res_transfer,
 		stat,
-		ChanStateName[stat],
-		(void *)new_ast);
+		ChanStateName[stat]);
 	ast_verbose("[%s %s] application stop.\n", AST_MODULE, TimeNowPrn());
     }
 
@@ -1961,20 +2181,6 @@ struct ast_channel *new_ast=NULL;
 
     return 0;
 }
-//----------------------------------------------------------------------
-/*
-inline static void look_chan(const char *nchan, const char *caller, const char *ext, int pr)
-{
-s_chan_record *rec = find_chan_by_dest(caller, ext);
-
-    if (!rec) {
-	if (pr>=2) ast_verbose("[%s %s] Look_chan : Not found channel with chan=[%s] exten=[%s] caller=[%s]\n",
-			AST_MODULE,
-			TimeNowPrn(),
-			nchan, ext, caller);
-    }
-}
-*/
 //----------------------------------------------------------------------
 static int hook_callback(int category, const char *event, char *body)
 {
@@ -2097,14 +2303,31 @@ char stx[SIZE_OF_RESP]={0};
 			memcpy(app, uk, dl);
 		    }
 		}
-		if (lg) ast_verbose("[%s %s] '%s' event : chan='%s' exten='%s' caller='%s' state=%d(%s) app='%s'\n",
-				AST_MODULE, TimeNowPrn(), event, chan, exten, caller, cs, ChanStateName[cs], app);
+
 		if (tp==1) {//Hangup
-		    if ( (strlen(chan)) && (strlen(exten)) && (strlen(caller)) ) find_chan(chan, caller, exten, 1);
+		    if (lg) ast_verbose("[%s %s] '%s' event : chan='%s' exten='%s' caller='%s' state=%d(%s) app='%s'\n",
+				AST_MODULE, TimeNowPrn(), event, chan, exten, caller, cs, ChanStateName[cs], app);
+		    if ( (strlen(chan)) && (strlen(exten)) && (strlen(caller)) ) {
+			if (find_chan(chan, caller, exten, 1)) {
+			    //s_chan_event *ev = make_chan_event(tp, chan, caller, exten);
+			    add_event_list(make_chan_event(tp, chan, caller, exten));
+			    //if (ev) send_to_crm(ev);
+			}
+		    }
 		} else if (tp==2) {//Newchannel
-		    if ( (strlen(chan)) && (strlen(exten)) && (strlen(caller)) ) update_chan(chan, caller, exten);
+		    if (lg) ast_verbose("[%s %s] '%s' event : chan='%s' exten='%s' caller='%s' state=%d(%s) app='%s'\n",
+				AST_MODULE, TimeNowPrn(), event, chan, exten, caller, cs, ChanStateName[cs], app);
+		    if ( (strlen(chan)) && (strlen(exten)) && (strlen(caller)) ) {
+			update_chan(chan, caller, exten);
+			if (find_chan(chan, caller, exten, 0)) {
+			    //s_chan_event *ev = make_chan_event(tp, chan, caller, exten);
+			    add_event_list(make_chan_event(tp, chan, caller, exten));
+			    //if (ev) send_to_crm(ev);
+			}
+		    }
 		} else {//Newexten
-		    //if (lg) ast_verbose("%s",hook_tmp_str);
+		//    if (lg) ast_verbose("[%s %s] '%s' event : chan='%s' exten='%s' caller='%s' state=%d(%s) app='%s'\n",
+		//		AST_MODULE, TimeNowPrn(), event, chan, exten, caller, cs, ChanStateName[cs], app);
 		}
 	    break;
 	    case 4://AgentConnect
@@ -2554,6 +2777,38 @@ int act, len=0;
 
     return CLI_FAILURE;
 }
+//------------------------------------------------------------------------------
+static char *cli_salara_send_post(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a)
+{
+char *buf=NULL;
+
+    switch (cmd) {
+	case CLI_INIT:
+	    e->command = "salara send post";
+	    e->usage = "\nUsage: salara send post <\"body\">\n\n";
+	    return NULL;
+	case CLI_GENERATE:
+	    return NULL;
+	case CLI_HANDLER:
+
+	    if (a->argc < 2) return CLI_SHOWUSAGE;
+
+	    buf = (char *)calloc(1,1024);
+	    if (buf) {
+		CURLcode err;
+		send_curl_event(dest_url_event, (char *)a->argv[3], SALARA_CURLOPT_TIMEOUT, buf, 1024, &err, 0, 0);
+		ast_verbose(buf);
+		free(buf);
+		return CLI_SUCCESS;
+	    }
+	break;
+    }
+
+    //if (a->argc < 4) return CLI_SHOWUSAGE;
+
+    return CLI_FAILURE;
+}
+
 //----------------------------------------------------------------------
 static int get_good_status(char *st, int prn)
 {
@@ -3408,7 +3663,173 @@ pthread_t launched;
     }
     return NULL;
 }
+//----------------------------------------------------------------------
+//----------------------------------------------------------------------
+static int send_curl_event(char *url, char *body, int wait, char *str, int str_len, CURLcode *err, int crt, int prn)
+{
+int ret=-1, dl;
+CURL *curl;
+CURLcode res = CURLE_OK;
+struct MemoryStruct chunk;
+const char *uke=NULL;
 
+    if ((!body) || (!str)) return ret;
+
+    chunk.memory = (char *)malloc(1);
+    chunk.size = 0;
+
+    curl_global_init(CURL_GLOBAL_ALL);
+
+    curl = curl_easy_init();
+    if (curl) {
+	struct curl_slist *headers=NULL;
+	//headers = curl_slist_append(headers, "Content-Type: application/x-www-form-urlencoded");
+	headers = curl_slist_append(headers, "Content-Type: text/plain");
+	curl_easy_setopt(curl, CURLOPT_URL, url);
+	if (body) {
+	    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, strlen(body));
+	    curl_easy_setopt(curl, CURLOPT_COPYPOSTFIELDS, body);
+	    //curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
+	}
+	if (crt) {//disable ssl certificates
+	    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0);
+	    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0);
+	}
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WrMemEventCallBackFunc);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
+	curl_easy_setopt(curl, CURLOPT_USERAGENT, global_useragent);
+	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+	curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1);
+	curl_easy_setopt(curl, CURLOPT_TIMEOUT, wait);
+	res = curl_easy_perform(curl);
+	*err = res;
+	if (res == CURLE_OK) {
+	    dl = chunk.size;
+	    if (dl >= str_len) dl = str_len-1;
+	    memcpy(str, (char *)chunk.memory, dl);
+	    //ret = CheckCurlEventAnswer((char *)chunk.memory, str);
+	    if (prn) ast_verbose("[%s] Curl answer :%.*s\n", AST_MODULE, chunk.size, (char *)chunk.memory);
+	    ret=0;
+	} else {
+	    uke = curl_easy_strerror(*err);
+	    dl = strlen(uke);
+	    if (dl >= str_len) dl = str_len-1;
+	    if (prn) ast_verbose("[%s] Curl Error : '%s' url=%s\n", AST_MODULE, uke, dest_url_event);
+	    memcpy(str, uke, dl);
+	}
+	curl_slist_free_all(headers);
+	curl_easy_cleanup(curl);
+	free(chunk.memory);
+
+    }
+
+    curl_global_cleanup();
+
+    return ret;
+}
+//----------------------------------------------------------------------
+static int send_to_crm(s_chan_event *evt)
+{
+int ret=-1, lg, tp;
+int ssl=0;
+CURLcode err;
+json_t *jobj=NULL;
+int buf_len = MAX_ANSWER_LEN;
+char buf[MAX_ANSWER_LEN]={0};
+char *jbody=NULL;
+
+    if (!evt) return ret;
+
+    lg = salara_verbose;
+
+    jobj = json_object(); if (!jobj) return ret;
+
+    tp = evt->type; if (tp>=MAX_EVENT_NAME) tp = MAX_EVENT_NAME-1;
+    json_object_set_new(jobj,"EventType", json_integer((json_int_t)tp));
+    json_object_set_new(jobj,"EventName", json_string(EventName[tp]));
+    json_object_set_new(jobj,"Channel", json_string(evt->chan));
+    json_object_set_new(jobj,"Caller", json_string(evt->caller));
+    json_object_set_new(jobj,"Extension", json_string(evt->exten));
+
+    jbody = json_dumps(jobj, JSON_COMPACT);
+
+    if (jbody) {
+	if (strstr(dest_url_event,"https:")) ssl=1;
+	ret = send_curl_event(dest_url_event, jbody, SALARA_CURLOPT_TIMEOUT, buf, buf_len, &err, ssl, 0);//&err, ssl, lg
+    }
+
+    if (lg) ast_verbose("[%s %s] Send_to_CRM :\n\turl=%s\n\tpost=%s\n\tanswer=%s\n",
+			AST_MODULE,
+			TimeNowPrn(),
+			dest_url_event, jbody, buf);
+
+    //if (jbody) { free(jbody); jbody=NULL; }
+    json_decref(jobj); jobj=NULL;
+
+    rm_chan_event(evt);
+
+    return 0;
+}
+//----------------------------------------------------------------------
+//----------------------------------------------------------------------
+static void *send_by_event(void *arg)
+{
+s_event_list *rec=NULL;
+s_chan_event *evt=NULL;
+pthread_t tid = pthread_self();
+int loop=1, tp, rsa=1, cnt;
+
+    ast_verbose("[%s %s] SEND_BY_EVENT Thread started (tid:%lu).\n", AST_MODULE, TimeNowPrn(), tid);
+
+    start_http_nitka=1;
+
+    while (loop) {
+	usleep(10000);
+
+	//ast_mutex_lock(&event_lock);
+	rsa = ast_mutex_trylock(&event_lock);
+	if (rsa) {
+	    //ast_verbose("[%s %s] send_by_event thread : trylock not success !!!\n", AST_MODULE, TimeNowPrn());
+	    if (stop_http_nitka) break;
+	    else continue;
+	} //else ast_verbose("[%s %s] send_by_event thread : Lock success !!!\n", AST_MODULE, TimeNowPrn());
+
+	if (event_hdr.counter>0) {
+	    rec = event_hdr.first;
+	    cnt = event_hdr.counter;
+	    if (rec->event) {
+		evt = make_chan_event(rec->event->type, rec->event->chan, rec->event->caller, rec->event->exten);
+		if (evt) {
+		    del_event_list(rec, 0);//delete event_record from list
+		    ast_mutex_unlock(&event_lock); rsa=1;
+		    //ast_verbose("[%s %s] send_by_event thread : Unlock success !!!\n", AST_MODULE, TimeNowPrn());
+		    if (salara_verbose > 1) {
+			tp = evt->type; if (tp >= MAX_EVENT_NAME) tp = MAX_EVENT_NAME-1;
+			ast_verbose("[%s %s] SEND_BY_EVENT Thread (%d):\n\t-- type(%d)='%s' chan='%s' exten='%s' caller='%s'\n",
+					AST_MODULE, TimeNowPrn(), cnt,
+					tp, EventName[tp], evt->chan, evt->exten, evt->caller);
+		    }
+		    send_to_crm(evt);
+		}
+	    }
+	}
+	if (!rsa) {
+	    ast_mutex_unlock(&event_lock); rsa=1;
+	    //ast_verbose("[%s %s] send_by_event thread : Unlock success !!!\n", AST_MODULE, TimeNowPrn());
+	}
+
+	ast_mutex_unlock(&event_lock);
+
+	if (stop_http_nitka) break;
+
+    }//while loop
+
+    ast_verbose("[%s %s] SEND_BY_EVENT Thread stoped.\n", AST_MODULE, TimeNowPrn());
+
+    start_http_nitka=0;
+
+    pthread_exit(NULL);
+}
 //----------------------------------------------------------------------
 static void *cli_rest_close(void *data)
 {
@@ -3491,13 +3912,17 @@ static int salara_cleanup(void)
 /**/
 int res=0;
 
+/**/
+    if (!reload) stop_http_nitka=1;
+/**/
+
 #ifdef CURLs
     res = ast_custom_function_unregister(&salara_curls);
     res |= ast_custom_function_unregister(&salara_curlopts);
 
     AST_TEST_UNREGISTER(salara_url);
 #else
-    curl_global_cleanup();
+//    curl_global_cleanup();
 #endif
     //write_config(salara_config_file, 0);
 
@@ -3505,7 +3930,7 @@ int res=0;
 
 	delete_act_list();
 
-	remove_chan_records();
+	//remove_chan_records();
 
 	remove_records();
 
@@ -3517,13 +3942,26 @@ int res=0;
 
 	if (salara_atexit_registered) ast_unregister_atexit(salara_atexit);
 
-	//-------   server   --------------------------------------------
-	if (!reload) ast_tcptls_server_stop(&sami_desc);
-	//----------------------------------------------------------------
+	    //-------   server   --------------------------------------------
+	if (!reload) {
+	    ast_tcptls_server_stop(&sami_desc);
+	    //----------------------------------------------------------------
+	    /**/if (http_tid != AST_PTHREADT_NULL) {
+		pthread_cancel(http_tid);
+		pthread_kill(http_tid, SIGURG);
+		pthread_join(http_tid, NULL);
+		pthread_attr_destroy(&threadAttr);
+		start_http_nitka=0;
+		remove_event_list();
+		remove_chan_records();
+	    }/**/
+	}
 
     ast_mutex_unlock(&salara_lock);
 
 //    ast_verbose("\t[v%s] Module '%s.so' unloaded OK.\n",SALARA_VERSION, AST_MODULE);
+
+    start_http_nitka=0;
 
     return res;
 }
@@ -3540,6 +3978,11 @@ struct ast_sockaddr sami_desc_local_address_tmp;
 
 //    ast_verbose("[%s] Load for * version %s\n",AST_MODULE,ast_get_version_num());
 
+    unload=0;
+
+/**/
+    if (!reload) start_http_nitka=0;
+/**/
 
 #ifdef CURLs
     if (!ast_module_check("res_curl.so")) {
@@ -3552,7 +3995,7 @@ struct ast_sockaddr sami_desc_local_address_tmp;
     res |= ast_custom_function_register(&salara_curlopts);
     AST_TEST_REGISTER(salara_url);
 #else
-    curl_global_init(CURL_GLOBAL_ALL);
+//    curl_global_init(CURL_GLOBAL_ALL);
 #endif
 
     gettimeofday(&salara_start_time, NULL);
@@ -3569,8 +4012,8 @@ struct ast_sockaddr sami_desc_local_address_tmp;
 	init_act_list();
 
 	init_records();
-	
-	init_chan_records();
+
+	//init_chan_records();
 
 	if (ast_register_atexit(salara_atexit) < 0) {
 	    salara_atexit_registered = 0;
@@ -3595,14 +4038,27 @@ struct ast_sockaddr sami_desc_local_address_tmp;
 	ast_cli_register_multiple(cli_salara, ARRAY_LEN(cli_salara));
 	salara_cli_registered = 1;
 
-	//-------   server   --------------------------
+	    //-------   server   --------------------------
 	if (!reload) {
 	    ast_sockaddr_setnull(&sami_desc.local_address);
 	    ast_sockaddr_parse(&sami_desc_local_address_tmp, rest_server, 0);
 	    ast_sockaddr_copy(&sami_desc.local_address, &sami_desc_local_address_tmp);
 	    ast_tcptls_server_start(&sami_desc);
+	    //---------------------------------------------
+
+/**/	    if (!start_http_nitka) {
+		init_chan_records();
+		init_event_list();
+		stop_http_nitka=0;
+		//if (ast_pthread_create_detached_background(&http_tid, NULL, send_by_event, &event_hdr))
+		pthread_attr_init(&threadAttr);
+		pthread_attr_setdetachstate(&threadAttr, PTHREAD_CREATE_DETACHED);
+		if (pthread_create(&http_tid, &threadAttr, send_by_event, &event_hdr)) {
+		    ast_verbose("[%s] Unable to launch http client thread: %s\n", AST_MODULE, strerror(errno));
+		    start_http_nitka=0;
+		}
+	    }/**/
 	}
-	//---------------------------------------------
 
     ast_mutex_unlock(&salara_lock);
 
@@ -3617,6 +4073,7 @@ struct ast_sockaddr sami_desc_local_address_tmp;
 //----------------------------------------------------------------------
 static int unload_module(void)
 {
+    unload = 1;
     return (salara_cleanup());
 
 }
