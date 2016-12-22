@@ -31,7 +31,7 @@
 
 #define TIME_STR_LEN 128
 #define AST_MODULE "salara"
-#define AST_MODULE_DESC "Features : transfer call; make call; get status: exten., peer, channel; send: command, message, post"
+#define AST_MODULE_DESC "Features: transfer call; make call; get status: exten.,peer,channel; send: command,message,post"
 #define DEF_DEST_NUMBER "1234"
 #define SALARA_VERSION "2.8"//22.12.2016
 //"2.7"//21.12.2016
@@ -84,6 +84,7 @@ typedef struct {
     char *chan;//[AST_CHANNEL_NAME];
     char *exten;//[AST_MAX_EXTENSION];
     char *caller;//[AST_MAX_EXTENSION];
+    int state;//status
 } s_chan_event;
 //                     chan_event list
 typedef struct self_evt {
@@ -156,6 +157,7 @@ static char hook_tmp_str[max_buf_size]={0};
 
 static int reload=0;
 static int unload=0;
+static unsigned char newexten = 0;
 static unsigned char console = 0;
 static unsigned char dirty=1;//clear lost chan_records
 static unsigned char start_http_nitka = 0;
@@ -273,7 +275,7 @@ static s_chan_record *update_chan(const char *nchan, const char *caller, const c
 static s_chan_record *find_chan(const char *nchan, const char *caller, const char *ext, int with_del);
 static void *send_by_event(void *arg);
 //------------------------------------------------------------------------
-inline static s_chan_event *make_chan_event(int type, const char *nchan, const char *caller, const char *exten)
+inline static s_chan_event *make_chan_event(int type, const char *nchan, const char *caller, const char *exten, int stat)
 {
 s_chan_event *ret=NULL, *evt=NULL;
 char *tmp_chan=NULL, *tmp_caller=NULL, *tmp_exten=NULL;
@@ -287,6 +289,7 @@ int err=1, lg = salara_verbose;
 	evt->chan = NULL;
 	evt->exten = NULL;
 	evt->caller = NULL;
+	evt->state = stat;
 	tmp_chan = (char *)calloc(1,strlen(nchan)+1);
 	if (tmp_chan) {
 	    memcpy(tmp_chan, nchan, strlen(nchan));
@@ -363,7 +366,7 @@ s_event_list *ret=NULL, *rec=NULL, *tmp=NULL;
 	}
 
 	if (lg>1) {
-	    if (ret) ast_verbose("[%s %s] add_event_list (%d) : rec=%p before=%p next=%p\n\t-- type=%d chan='%s' exten='%s' caller='%s'\n",
+	    if (ret) ast_verbose("[%s %s] add_event_list (%d) : rec=%p before=%p next=%p\n\t-- type=%d chan='%s' exten='%s' caller='%s' state=%d\n",
 			AST_MODULE, TimeNowPrn(),
 			event_hdr.counter, (void *)ret,
 			(void *)ret->before,
@@ -371,7 +374,8 @@ s_event_list *ret=NULL, *rec=NULL, *tmp=NULL;
 			ret->event->type,
 			ret->event->chan,
 			ret->event->exten,
-			ret->event->caller);
+			ret->event->caller,
+			ret->event->state);
 	    else ast_verbose("[%s %s] add_event_list (%d) : Error -> rec=%p\n", AST_MODULE, TimeNowPrn(), event_hdr.counter, (void *)ret);
 	}
 
@@ -2309,31 +2313,42 @@ unsigned char i=0;
 			memcpy(app, uk, dl);
 		    }
 		}
-
+		if (lg>1) ast_verbose("[%s %s] '%s' event : chan='%s' caller='%s' exten='%s' state=%d(%s) app='%s'\n",
+				AST_MODULE, TimeNowPrn(), event, chan, caller, exten, cs, ChanStateName[cs], app);
 		if (tp==1) {//Hangup
-		    if (lg) ast_verbose("[%s %s] '%s' event : chan='%s' exten='%s' caller='%s' state=%d(%s) app='%s'\n",
-				AST_MODULE, TimeNowPrn(), event, chan, exten, caller, cs, ChanStateName[cs], app);
 		    if ( (strlen(chan)) && (strlen(exten)) && (strlen(caller)) ) {
-			if (find_chan(chan, caller, exten, 1)) {
-			    //s_chan_event *ev = make_chan_event(tp, chan, caller, exten);
-			    add_event_list(make_chan_event(tp, chan, caller, exten));
-			    //if (ev) send_to_crm(ev);
-			}
+			if (find_chan(chan, caller, exten, 1)) add_event_list(make_chan_event(tp, chan, caller, exten, cs));
 		    }
 		} else if (tp==2) {//Newchannel
-		    if (lg) ast_verbose("[%s %s] '%s' event : chan='%s' exten='%s' caller='%s' state=%d(%s) app='%s'\n",
-				AST_MODULE, TimeNowPrn(), event, chan, exten, caller, cs, ChanStateName[cs], app);
 		    if ( (strlen(chan)) && (strlen(exten)) && (strlen(caller)) ) {
 			update_chan(chan, caller, exten);
-			if (find_chan(chan, caller, exten, 0)) {
-			    //s_chan_event *ev = make_chan_event(tp, chan, caller, exten);
-			    add_event_list(make_chan_event(tp, chan, caller, exten));
-			    //if (ev) send_to_crm(ev);
-			}
+			if (find_chan(chan, caller, exten, 0)) add_event_list(make_chan_event(tp, chan, caller, exten, cs));
 		    }
-		} else {//Newexten
-		//    if (lg) ast_verbose("[%s %s] '%s' event : chan='%s' exten='%s' caller='%s' state=%d(%s) app='%s'\n",
-		//		AST_MODULE, TimeNowPrn(), event, chan, exten, caller, cs, ChanStateName[cs], app);
+		} else if (tp==3) {//Newexten
+		    switch (newexten) {
+			case 1://only when feature 'transfer call' used
+			    //used for transfer call with status UP
+			    if (cs==6) {//when state=UP
+				if ( (strlen(chan)) && (strlen(exten)) && (strlen(caller)) ) {
+				    if (find_chan(chan, caller, exten, 0))//when find caller:exten in chan_list
+					add_event_list(make_chan_event(tp, chan, caller, exten, cs));
+				}
+			    }
+			break;
+			case 2://all event (for any state)
+			    //used for transfer call with all status
+			    if ( (strlen(chan)) && (strlen(exten)) && (strlen(caller)) ) {
+				if (find_chan(chan, caller, exten, 0))//when find caller:exten in chan_list
+					add_event_list(make_chan_event(tp, chan, caller, exten, cs));
+			    }
+			break;
+			case 3://all event (for any state)
+			    //used for all call with all status
+			    if ( (strlen(chan)) && (strlen(exten)) && (strlen(caller)) ) {
+				add_event_list(make_chan_event(tp, chan, caller, exten, cs));
+			    }
+			break;
+		    }
 		}
 	    break;
 	    case 4://AgentConnect
@@ -2396,6 +2411,13 @@ unsigned char i;
 	    case 2 : ast_cli(a->fd, "debug\n"); break;
 	    case 3 : ast_cli(a->fd, "dump\n"); break;
 		default: ast_cli(a->fd, "unknown\n");
+	}
+	ast_cli(a->fd, "\t-- Newexten event: %d", newexten);
+	switch (newexten) {
+	    case 0: ast_cli(a->fd, " (not used)\n"); break;
+	    case 1: ast_cli(a->fd, " (used for transfer call with status UP)\n"); break;
+	    case 2: ast_cli(a->fd, " (used for transfer call with all status)\n"); break;
+	    case 3: ast_cli(a->fd, " (used for all call with all status)\n"); break;
 	}
 	ast_cli(a->fd, "\t-- started: %s", ctime(&salara_start_time.tv_sec));
 	c_t.tv_sec -= salara_start_time.tv_sec;
@@ -3033,6 +3055,15 @@ char *_begin=NULL, *uk=NULL, *uki=NULL, *uks=NULL;
 										    uks = strchr(buf,'\n'); if (uks) *uks = '\0';
 										    uki += 15;
 										    sprintf(dest_url_event,"%s",uki);
+										} else {
+										    uki = strstr(buf,"newexten=");
+										    if (uki) {
+											//ast_verbose("\tread_config: newexten:%s\n",buf);
+											uks = strchr(buf,'\n'); if (uks) *uks = '\0';
+											uki += 9;
+											verb = atoi(uki);
+											if ((verb>=0) && (verb<=3)) newexten = verb;
+										    }
 										}
 									    }
 									}
@@ -3121,6 +3152,7 @@ s_route_record *rt=NULL, *nx=NULL;
 
     len += fprintf(fp, "[event]\n");
     len += fprintf(fp, "verbose=%d\n", salara_verbose);
+    len += fprintf(fp, "newexten=%d\n", newexten);
     len += fprintf(fp, FORMAT_SEPARATOR_LINE);
 
     len += fprintf(fp, "[url]\n");
@@ -3750,7 +3782,7 @@ const char *uke=NULL;
 //----------------------------------------------------------------------
 static int send_to_crm(s_chan_event *evt)
 {
-int ret=-1, lg, tp;
+int ret=-1, lg, tp, ts;
 int ssl=0;
 CURLcode err;
 json_t *jobj=NULL;
@@ -3764,12 +3796,14 @@ char *jbody=NULL;
 
     jobj = json_object(); if (!jobj) return ret;
 
-    tp = evt->type; if (tp>=MAX_EVENT_NAME) tp = MAX_EVENT_NAME-1;
-    json_object_set_new(jobj,"EventType", json_integer((json_int_t)tp));
-    json_object_set_new(jobj,"EventName", json_string(EventName[tp]));
-    json_object_set_new(jobj,"Channel", json_string(evt->chan));
-    json_object_set_new(jobj,"Caller", json_string(evt->caller));
-    json_object_set_new(jobj,"Extension", json_string(evt->exten));
+    tp = evt->type; if (tp >= MAX_EVENT_NAME) tp = MAX_EVENT_NAME-1;
+    ts = evt->state; if (ts >= MAX_CHAN_STATE) ts = MAX_CHAN_STATE-1;
+    //json_object_set_new(jobj,"type", json_integer((json_int_t)tp));
+    json_object_set_new(jobj,"name", json_string(EventName[tp]));
+    json_object_set_new(jobj,"chan", json_string(evt->chan));
+    json_object_set_new(jobj,"caller", json_string(evt->caller));
+    json_object_set_new(jobj,"exten", json_string(evt->exten));
+    json_object_set_new(jobj,"state", json_string(ChanStateName[ts]));
 
     jbody = json_dumps(jobj, JSON_COMPACT);
 
@@ -3778,7 +3812,7 @@ char *jbody=NULL;
 	ret = send_curl_event(dest_url_event, jbody, SALARA_CURLOPT_TIMEOUT, buf, buf_len, &err, ssl, 1, 0);//&err, ssl, json, lg
     }
 
-    if (lg) ast_verbose("[%s %s] Send_to_CRM :\n\turl=%s\n\tpost=%s\n\tanswer=%s\n",
+    if (lg) ast_verbose("[%s %s] Send_to_CRM '%s'\n\tpost=%s\n\tanswer=%s\n",
 			AST_MODULE,
 			TimeNowPrn(),
 			dest_url_event, jbody, buf);
@@ -3797,7 +3831,7 @@ static void *send_by_event(void *arg)
 s_event_list *rec=NULL;
 s_chan_event *evt=NULL;
 pthread_t tid = pthread_self();
-int loop=1, tp, rsa=1, cnt;
+int loop=1, tp, rsa=1, cnt, ts;
 
     ast_verbose("[%s %s] SEND_BY_EVENT Thread started (tid:%lu).\n", AST_MODULE, TimeNowPrn(), tid);
 
@@ -3818,16 +3852,17 @@ int loop=1, tp, rsa=1, cnt;
 	    rec = event_hdr.first;
 	    cnt = event_hdr.counter;
 	    if (rec->event) {
-		evt = make_chan_event(rec->event->type, rec->event->chan, rec->event->caller, rec->event->exten);
+		evt = make_chan_event(rec->event->type, rec->event->chan, rec->event->caller, rec->event->exten, rec->event->state);
 		if (evt) {
 		    del_event_list(rec, 0);//delete event_record from list
 		    ast_mutex_unlock(&event_lock); rsa=1;
 		    //ast_verbose("[%s %s] send_by_event thread : Unlock success !!!\n", AST_MODULE, TimeNowPrn());
 		    if (salara_verbose > 1) {
 			tp = evt->type; if (tp >= MAX_EVENT_NAME) tp = MAX_EVENT_NAME-1;
-			ast_verbose("[%s %s] SEND_BY_EVENT Thread (%d):\n\t-- type(%d)='%s' chan='%s' exten='%s' caller='%s'\n",
+			ts = evt->state; if (ts >= MAX_CHAN_STATE) ts = MAX_CHAN_STATE-1;
+			ast_verbose("[%s %s] SEND_BY_EVENT Thread (%d):\n\t-- type(%d)='%s' chan='%s' exten='%s' caller='%s' state(%d)='%s'\n",
 					AST_MODULE, TimeNowPrn(), cnt,
-					tp, EventName[tp], evt->chan, evt->exten, evt->caller);
+					tp, EventName[tp], evt->chan, evt->exten, evt->caller, ts, ChanStateName[ts]);
 		    }
 		    send_to_crm(evt);
 		}
