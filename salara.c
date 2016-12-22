@@ -31,7 +31,7 @@
 
 #define TIME_STR_LEN 128
 #define AST_MODULE "salara"
-#define AST_MODULE_DESC "Features : transfer call; make call; get status: exten., peer, channel; send [command, message]"
+#define AST_MODULE_DESC "Features : transfer call; make call; get status: exten., peer, channel; send: command, message, post"
 #define DEF_DEST_NUMBER "1234"
 #define SALARA_VERSION "2.8"//22.12.2016
 //"2.7"//21.12.2016
@@ -72,22 +72,15 @@ enum bool {
     true = 1
 };
 
+//------------------------------------------------------------------------
 struct MemoryStruct {
   char *memory;
   size_t size;
 };
 
-/*
-typedef struct {
-    char *body;
-    int len;
-    int part;
-    int id;
-} s_resp_list;
-*/
 //------------------  send chan_event by hangup  -----------------------
 typedef struct {
-    int type;
+    int type;//0-HookResponse, 1-Hangup, 2-Newchannel, 3-Newexten, 4-AgentConnect
     char *chan;//[AST_CHANNEL_NAME];
     char *exten;//[AST_MAX_EXTENSION];
     char *caller;//[AST_MAX_EXTENSION];
@@ -2190,15 +2183,25 @@ static int hook_callback(int category, const char *event, char *body)
 int lg, id=-1, sti=-1, done=0, dl, rdy=0, tp=-1;
 char *uk=NULL, *uk2=NULL;
 char stx[SIZE_OF_RESP]={0};
+unsigned char i=0;
 
 //    if ( (strstr(event,"RTCP")) || (strstr(event,"Cdr")) ) return 0;
 
-    if (!strcmp(event,"HookResponse")) tp=0;
+/*    if (!strcmp(event,"HookResponse")) tp=0;
     else if (!strcmp(event,"Hangup")) tp=1;
     else if (!strcmp(event,"Newchannel")) tp=2;
     else if (!strcmp(event,"Newexten")) tp=3;
     else if (!strcmp(event,"AgentConnect")) tp=4;
-    else return 0;
+    else return 0;*/
+
+    while (i<MAX_EVENT_NAME) {
+	if (!strcmp(event,EventName[i])) {
+	    tp=i;
+	    break;
+	}
+	i++;
+    }
+    if (tp == -1) return 0;
 
     lg = salara_verbose;
 
@@ -2408,7 +2411,7 @@ unsigned char i;
 	    }
 	    ast_cli(a->fd,"\n");
 	ast_mutex_unlock(&route_lock);
-	
+
 	ast_cli(a->fd, "\t-- key_word: '%s'\n",key_word);
 	ast_cli(a->fd, "\t-- rest keys:");
 	for (i=0; i<max_param_rest; i++) ast_cli(a->fd, " '%s'",&names_rest[i][0]);
@@ -2601,7 +2604,7 @@ char *buf=NULL;
 	    return NULL;
 	case CLI_HANDLER:
 
-	    if (a->argc < 4) return CLI_SHOWUSAGE;
+	    if (a->argc < 5) return CLI_SHOWUSAGE;
 
 	    buf = (char *)calloc(1, CMD_BUF_LEN);
 	    if (buf) {
@@ -2650,7 +2653,7 @@ char *buf=NULL;
 	    return NULL;
 	case CLI_HANDLER:
 
-	    if (a->argc < 4) return CLI_SHOWUSAGE;
+	    if (a->argc < 5) return CLI_SHOWUSAGE;
 
 	    buf = (char *)calloc(1, CMD_BUF_LEN);
 	    if (buf) {
@@ -2697,7 +2700,7 @@ char *buf=NULL;
 	    return NULL;
 	case CLI_HANDLER:
 
-	    if (a->argc < 4) return CLI_SHOWUSAGE;
+	    if (a->argc < 5) return CLI_SHOWUSAGE;
 
 	    buf = (char *)calloc(1, CMD_BUF_LEN);
 	    if (buf) {
