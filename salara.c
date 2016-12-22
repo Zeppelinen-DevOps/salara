@@ -33,7 +33,8 @@
 #define AST_MODULE "salara"
 #define AST_MODULE_DESC "Features : transfer call; make call; get status: exten., peer, channel; send [command, message]"
 #define DEF_DEST_NUMBER "1234"
-#define SALARA_VERSION "2.7"//21.12.2016
+#define SALARA_VERSION "2.8"//22.12.2016
+//"2.7"//21.12.2016
 //"2.6"//20.12.2016
 //"2.5"//18.12.2016
 //"2.4"//17.12.2016
@@ -540,11 +541,11 @@ char *stc=NULL, *ste=NULL, *stcaller=NULL;
 	}
 
 	if (lg>1) {//>2
-	    if (lg>2) ast_verbose("[%s] add_chan : first=%p end=%p counter=%d (chan='%s' ext='%s' caller='%s' ast=%p)\n",
-			AST_MODULE, (void *)chan_hdr.first, (void *)chan_hdr.end, chan_hdr.counter,
+	    if (lg>2) ast_verbose("[%s %s] add_chan : first=%p end=%p counter=%d (chan='%s' ext='%s' caller='%s' ast=%p)\n",
+			AST_MODULE, TimeNowPrn(), (void *)chan_hdr.first, (void *)chan_hdr.end, chan_hdr.counter,
 			nchan, ext, caller, data);
-	    if (ret) ast_verbose("[%s] add_chan : rec=%p before=%p next=%p chan='%s' ext='%s' caller='%s' ast=%p\n",
-			AST_MODULE, (void *)ret, (void *)ret->before, (void *)ret->next,
+	    if (ret) ast_verbose("[%s %s] add_chan : rec=%p before=%p next=%p chan='%s' ext='%s' caller='%s' ast=%p\n",
+			AST_MODULE, TimeNowPrn(), (void *)ret, (void *)ret->before, (void *)ret->next,
 			ret->chan, ret->exten, ret->caller, ret->ast);
 	}
 
@@ -637,14 +638,14 @@ char *nc=NULL;
 	}
 
 	if (lg>1) {//>2
-	    if (ret) ast_verbose("[%s] update_chan : first=%p end=%p counter=%d chan='%s' exten='%s' caller='%s' ast=%p, record found %p\n",
-				AST_MODULE,
+	    if (ret) ast_verbose("[%s %s] update_chan : first=%p end=%p counter=%d chan='%s' exten='%s' caller='%s' ast=%p, record found %p\n",
+				AST_MODULE, TimeNowPrn(),
 				(void *)chan_hdr.first, (void *)chan_hdr.end, chan_hdr.counter,
 				nchan, ext, caller, ret->ast,
 				(void *)ret);
 	    else
-		ast_verbose("[%s] update_chan : first=%p end=%p counter=%d chan='%s' exten='%s' caller='%s', record not found\n",
-				AST_MODULE,
+		ast_verbose("[%s %s] update_chan : first=%p end=%p counter=%d chan='%s' exten='%s' caller='%s', record not found\n",
+				AST_MODULE, TimeNowPrn(),
 				(void *)chan_hdr.first, (void *)chan_hdr.end, chan_hdr.counter,
 				nchan, ext, caller);
 	}
@@ -681,14 +682,14 @@ s_chan_record *ret=NULL, *temp=NULL, *tmp=NULL;
 
 	if (lg>2) {//>2
 	    if (ret)
-		ast_verbose("[%s] find_chan : first=%p end=%p counter=%d chan='%s' exten='%s' caller='%s' ast=%p, record found %p\n",
-			AST_MODULE,
+		ast_verbose("[%s %s] find_chan : first=%p end=%p counter=%d chan='%s' exten='%s' caller='%s' ast=%p, record found %p\n",
+			AST_MODULE, TimeNowPrn(),
 			(void *)chan_hdr.first, (void *)chan_hdr.end, chan_hdr.counter,
 			nchan, ext, caller, ret->ast,
 			(void *)ret);
 	    else
-		ast_verbose("[%s] find_chan : first=%p end=%p counter=%d chan='%s' exten='%s' caller='%s', record not found\n",
-			AST_MODULE,
+		ast_verbose("[%s %s] find_chan : first=%p end=%p counter=%d chan='%s' exten='%s' caller='%s', record not found\n",
+			AST_MODULE, TimeNowPrn(),
 			(void *)chan_hdr.first, (void *)chan_hdr.end, chan_hdr.counter,
 			nchan, ext, caller);
 	}
@@ -748,16 +749,16 @@ s_chan_record *ret=NULL, *temp=NULL, *tmp=NULL;
 	
 	if (lg > 2) {
 	    if (ret)
-		ast_verbose("[%s] find_chan : first=%p end=%p counter=%d chan='%s' exten='%s' caller='%s' %p, record found %p\n",
-			AST_MODULE,
+		ast_verbose("[%s %s] find_chan : first=%p end=%p counter=%d chan='%s' exten='%s' caller='%s' %p, record found %p\n",
+			AST_MODULE, TimeNowPrn(),
 			(void *)chan_hdr.first,
 			(void *)chan_hdr.end,
 			chan_hdr.counter,
 			ret->chan, ret->exten, ret->caller, ret->ast,
 			(void *)ret);
 	    else
-		ast_verbose("[%s] find_chan : first=%p end=%p counter=%d chan='%s' exten='%s' caller='%s', record not found\n",
-			AST_MODULE,
+		ast_verbose("[%s %s] find_chan : first=%p end=%p counter=%d chan='%s' exten='%s' caller='%s', record not found\n",
+			AST_MODULE, TimeNowPrn(),
 			(void *)chan_hdr.first,
 			(void *)chan_hdr.end,
 			chan_hdr.counter,
@@ -820,8 +821,8 @@ s_act_list *bf=NULL, *nx=NULL;
 	ret=0;
 
 	if (lg>2) {//>=2
-	    ast_verbose("[%s] delete_act : first=%p end=%p counter=%u\n",
-			AST_MODULE,
+	    ast_verbose("[%s %s] delete_act : first=%p end=%p counter=%u\n",
+			AST_MODULE, TimeNowPrn(),
 			(void *)act_hdr.first,
 			(void *)act_hdr.end,
 			act_hdr.counter);
@@ -881,8 +882,8 @@ s_act_list *temp=NULL, *tmp=NULL;
 		memset((char *)tmp->act->resp, 0, SIZE_OF_RESP);
 		if (len>0) memcpy((char *)tmp->act->resp, resp, len);
 		if (lg>=2)//>=2
-		    ast_verbose("[%s] update_act_by_index : adr=%p act_id=%u status=%d resp='%s'\n",
-			AST_MODULE,
+		    ast_verbose("[%s %s] update_act_by_index : adr=%p act_id=%u status=%d resp='%s'\n",
+			AST_MODULE, TimeNowPrn(),
 			(void *)tmp,
 			tmp->act->id,
 			tmp->act->status,
@@ -913,8 +914,8 @@ int ret=-1, lg, len;
 	    if (len>0) memcpy((char *)arcd->act->resp, resp, len);
 	    ret=0;
 	    if (lg>=2)//>=2
-		ast_verbose("[%s] update_act : adr=%p ind=%u status=%d resp='%s'\n",
-			AST_MODULE,
+		ast_verbose("[%s %s] update_act : adr=%p ind=%u status=%d resp='%s'\n",
+			AST_MODULE, TimeNowPrn(),
 			(void *)arcd,
 			arcd->act->id,
 			arcd->act->status,
@@ -952,9 +953,9 @@ s_act_list *ret=NULL, *temp=NULL, *tmp=NULL;
 	
 	if (lg>2) {//>=2
 	    if (ret)
-		ast_verbose("[%s] find_act : first=%p end=%p counter=%u\n"
+		ast_verbose("[%s %s] find_act : first=%p end=%p counter=%u\n"
 			    "\t-- rec=%p before=%p next=%p ind=%u status=%d resp='%s'\n",
-			AST_MODULE,
+			AST_MODULE, TimeNowPrn(),
 			(void *)act_hdr.first,
 			(void *)act_hdr.end,
 			act_hdr.counter,
@@ -965,8 +966,8 @@ s_act_list *ret=NULL, *temp=NULL, *tmp=NULL;
 			ret->act->status,
 			(char *)ret->act->resp);
 	    else
-		ast_verbose("[%s] find_act : first=%p end=%p counter=%u, record with ind=%u not found\n",
-			AST_MODULE,
+		ast_verbose("[%s %s] find_act : first=%p end=%p counter=%u, record with ind=%u not found\n",
+			AST_MODULE, TimeNowPrn(),
 			(void *)act_hdr.first,
 			(void *)act_hdr.end,
 			act_hdr.counter,
@@ -1013,8 +1014,8 @@ s_act *str=NULL;
 	}
 
 	if (lg>2) {//>=2
-	    ast_verbose("[%s] add_act : first=%p end=%p counter=%u\n",
-			AST_MODULE, 
+	    ast_verbose("[%s %s] add_act : first=%p end=%p counter=%u\n",
+			AST_MODULE, TimeNowPrn(),
 			(void *)act_hdr.first,
 			(void *)act_hdr.end,
 			act_hdr.counter);
@@ -1101,8 +1102,8 @@ s_route_record *ret=NULL, *tmp=NULL;
 	}
 
 	if (lg > 2) {
-	    ast_verbose("[%s] add_record : first=%p end=%p counter=%d (from='%s' to='%s')\n",
-			AST_MODULE, 
+	    ast_verbose("[%s %s] add_record : first=%p end=%p counter=%d (from='%s' to='%s')\n",
+			AST_MODULE, TimeNowPrn(),
 			(void *)route_hdr.first,
 			(void *)route_hdr.end,
 			route_hdr.counter,
@@ -1147,16 +1148,16 @@ s_route_record *ret=NULL, *temp=NULL, *tmp=NULL;
 	
 	if (lg > 2) {
 	    if (ret)
-		ast_verbose("[%s] find_record : first=%p end=%p counter=%d from='%s', record found %p\n",
-			AST_MODULE,
+		ast_verbose("[%s %s] find_record : first=%p end=%p counter=%d from='%s', record found %p\n",
+			AST_MODULE, TimeNowPrn(),
 			(void *)route_hdr.first,
 			(void *)route_hdr.end,
 			route_hdr.counter,
 			from,
 			(void *)ret);
 	    else
-		ast_verbose("[%s] find_record : first=%p end=%p counter=%d from='%s', record not found\n",
-			AST_MODULE,
+		ast_verbose("[%s %s] find_record : first=%p end=%p counter=%d from='%s', record not found\n",
+			AST_MODULE, TimeNowPrn(),
 			(void *)route_hdr.first,
 			(void *)route_hdr.end,
 			route_hdr.counter,
@@ -1203,8 +1204,8 @@ s_route_record *bf=NULL, *nx=NULL;
 	ret=0;
 
 	if (lg > 2) {
-	    ast_verbose("[%s] del_record : first=%p end=%p counter=%d\n",
-			AST_MODULE,
+	    ast_verbose("[%s %s] del_record : first=%p end=%p counter=%d\n",
+			AST_MODULE, TimeNowPrn(),
 			(void *)route_hdr.first,
 			(void *)route_hdr.end,
 			route_hdr.counter);
@@ -1282,7 +1283,7 @@ static int write_config(const char * file_name, int prn);
 static int check_dest(char *from, char *to);
 static int MakeAction(int type, char *from, char *to, char *mess, char *ctext);
 static int send_to_crm(s_chan_event *evt);
-static int send_curl_event(char *url, char *body, int wait, char *str, int str_len, CURLcode *err, int crt, int prn);
+static int send_curl_event(char *url, char *body, int wait, char *str, int str_len, CURLcode *err, int crt, int ctype, int prn);
 //----------------------------------------------------------------------
 //----------------------------------------------------------------------
 //----------------------------------------------------------------------
@@ -2005,7 +2006,7 @@ struct MemoryStruct chunk;
 	if (res == CURLE_OK) {
 	    ret = CheckCurlAnswer((char *)chunk.memory, str);
 	    if (lg>1)
-		ast_verbose("[%s] Curl answer :%.*s\n", AST_MODULE, chunk.size, (char *)chunk.memory);
+		ast_verbose("[%s %s] Curl answer :%.*s\n", AST_MODULE, TimeNowPrn(), chunk.size, (char *)chunk.memory);
 	}
 	curl_slist_free_all(headers);
 	curl_easy_cleanup(curl);
@@ -2037,7 +2038,7 @@ AST_DECLARE_APP_ARGS(args,
 );
 
     if (ast_strlen_zero((char *)data)) {
-	if (pr) ast_verbose("[%s] Transfer requires an argument ([Tech/]destination)\n", AST_MODULE);
+	if (pr) ast_verbose("[%s %s] Transfer requires an argument ([Tech/]destination)\n", AST_MODULE, TimeNowPrn());
 	pbx_builtin_setvar_helper(chan, VarName, S_Fail);
 	return -1;
     } else parse = ast_strdupa(data);
@@ -2096,7 +2097,7 @@ CURLcode er;
     buf = (char *)calloc(1,MAX_ANSWER_LEN);
 
     if (!buf) {
-	ast_verbose("[%s] calloc memory error !\n", AST_MODULE);
+	ast_verbose("[%s %s] calloc memory error !\n", AST_MODULE, TimeNowPrn());
 	return -1;
     }
 
@@ -2112,25 +2113,26 @@ CURLcode er;
 	sprintf(info,"%s%s", dest_url, cid);
 #ifdef CURLs
 	ret_curl = salara_curl_exec(ast, ccmd, info, buf, MAX_ANSWER_LEN);
-	if ((!ret_curl) && (lg)) ast_verbose("[%s] Curl_exec OK: url=%s\n", AST_MODULE, info);
+	if ((!ret_curl) && (lg)) ast_verbose("[%s %s] Curl_exec OK: url=%s\n", AST_MODULE, TimeNowPrn(), info);
 #else
 	if (strstr(dest_url,"https")) ssl=1;
 	ret_curl = send_curl(info, SALARA_CURLOPT_TIMEOUT, buf, &er, ssl);
 	if (er != CURLE_OK) {
 	    ret_curl = 1;
-	    if (lg) ast_verbose("[%s] Curl_exec Error: url=%s\n\t--buf=[%s] err='%s'\n", AST_MODULE, info, buf, curl_easy_strerror(er));
-	} else if (lg) ast_verbose("[%s] Curl_exec OK: url=%s\n", AST_MODULE, info);
+	    if (lg) ast_verbose("[%s %s] Curl_exec Error: url=%s\n\t--buf=[%s] err='%s'\n", AST_MODULE, TimeNowPrn(), info, buf, curl_easy_strerror(er));
+	} else if (lg) ast_verbose("[%s %s] Curl_exec OK: url=%s\n", AST_MODULE, TimeNowPrn(), info);
 #endif
 	free(info);
-    } else ast_verbose("[%s] Error: calloc memory\n", AST_MODULE);
+    } else ast_verbose("[%s %s] Error: calloc memory\n", AST_MODULE, TimeNowPrn());
     //--------------------------------------------------------------------
 
     if (ret_curl!=0) {
 	memset(dest_number,0,AST_MAX_EXTENSION);
 	strcpy(dest_number, DEF_DEST_NUMBER);
 	check_dest(cid, dest_number);
-	if (lg) ast_verbose("[%s] Curl failure, route call to default dest '%s'\n",
+	if (lg) ast_verbose("[%s %s] Curl failure, route call to default dest '%s'\n",
 		    AST_MODULE,
+		    TimeNowPrn(),
 		    dest_number);
     } else {
 	memset(dest_number,0,AST_MAX_EXTENSION);
@@ -2149,13 +2151,13 @@ CURLcode er;
 	    delete_act(abc,1);
 	}
 	if (!check_stat(stat)) {
-	    if (lg>1) ast_verbose("[%s] Extension '%s' status (%d) OK !\n", AST_MODULE, dest_number, stat);
+	    if (lg>1) ast_verbose("[%s %s] Extension '%s' status (%d) OK !\n", AST_MODULE, TimeNowPrn(), dest_number, stat);
 	} else {
-	    if (lg) ast_verbose("[%s] Extension '%s' status (%d) BAD !\n", AST_MODULE, dest_number, stat);
+	    if (lg) ast_verbose("[%s %s] Extension '%s' status (%d) BAD !\n", AST_MODULE, TimeNowPrn(), dest_number, stat);
 	    memset(dest_number,0,AST_MAX_EXTENSION);
 	    strcpy(dest_number, DEF_DEST_NUMBER);
 	    check_dest(cid, dest_number);
-	    if (lg) ast_verbose("[%s] Route call to default dest '%s'\n", AST_MODULE, dest_number);
+	    if (lg) ast_verbose("[%s %s] Route call to default dest '%s'\n", AST_MODULE, TimeNowPrn(), dest_number);
 	}
     }
 
@@ -2167,8 +2169,8 @@ CURLcode er;
 
     if (lg) {
 	stat = ast_channel_state(ast); if (stat > MAX_CHAN_STATE-1) stat=MAX_CHAN_STATE-1;
-	ast_verbose("[%s] CallerID=[%s] called=[%s] transfer to '%s' res=%d status=%d (%s)\n",
-		AST_MODULE,
+	ast_verbose("[%s %s] CallerID=[%s] called=[%s] transfer to '%s' res=%d status=%d (%s)\n",
+		AST_MODULE, TimeNowPrn(),
 		ast_channel_name(ast),
 		data,
 		dest_number,
@@ -2200,7 +2202,7 @@ char stx[SIZE_OF_RESP]={0};
 
     lg = salara_verbose;
 
-//    if (lg) ast_verbose("[%s] cat=%d event='%s' body=[\n%s]\n", AST_MODULE, category, event, body);
+//    if (lg) ast_verbose("[%s %s] cat=%d event='%s' body=[\n%s]\n", AST_MODULE, TimeNowPrn(), category, event, body);
 //    return 0;
 
     if ( (strlen(hook_tmp_str) + strlen(body)) > max_buf_size ) {
@@ -2255,7 +2257,7 @@ char stx[SIZE_OF_RESP]={0};
 			    }
 			}
 		    }
-		} else if (lg) ast_verbose("[%s] event='%s' ActionID not found\n", AST_MODULE, event);
+		} else if (lg) ast_verbose("[%s %s] event='%s' ActionID not found\n", AST_MODULE, TimeNowPrn(), event);
 	    break;
 	    case 1://Hangup
 	    case 2://Newchannel
@@ -2334,10 +2336,10 @@ char stx[SIZE_OF_RESP]={0};
 	    case 4://AgentConnect
 		if (lg) ast_verbose("%s",hook_tmp_str);
 	    break;
-		default : if (lg) ast_verbose("[%s] Unknown event='%s' body=[\n%s]\n",AST_MODULE,event,hook_tmp_str);
+		default : if (lg) ast_verbose("[%s %s] Unknown event='%s' body=[\n%s]\n",AST_MODULE,TimeNowPrn(),event,hook_tmp_str);
 	}//switch
 
-	if ((lg>=2) && (!console)) ast_verbose("[%s] event='%s' body=[\n%s]\n",AST_MODULE,event,hook_tmp_str);
+	if ((lg>=2) && (!console)) ast_verbose("[%s %s] event='%s' body=[\n%s]\n",AST_MODULE,TimeNowPrn(),event,hook_tmp_str);
 	memset(hook_tmp_str,0,max_buf_size);
     }//if (done)
 
@@ -2397,7 +2399,7 @@ unsigned char i;
 	ast_cli(a->fd, "\t-- uptime: %s (%lu sec)\n", seconds_to_date(buf, c_t.tv_sec), c_t.tv_sec);
 
 	ast_mutex_lock(&route_lock);
-	    ast_cli(a->fd, "\t-- routing table: records: %d",route_hdr.counter);
+	    ast_cli(a->fd, "\t-- routing table: %d records",route_hdr.counter);
 	    if (lg > 2) {
 		if (route_hdr.first)
 		    ast_cli(a->fd," (first=%p, end=%p)",
@@ -2787,18 +2789,21 @@ char *buf=NULL;
     switch (cmd) {
 	case CLI_INIT:
 	    e->command = "salara send post";
-	    e->usage = "\nUsage: salara send post <\"body\">\n\n";
+	    e->usage = "\nUsage: salara send post <type \"body\">\n\n";
 	    return NULL;
 	case CLI_GENERATE:
 	    return NULL;
 	case CLI_HANDLER:
 
-	    if (a->argc < 2) return CLI_SHOWUSAGE;
+	    if (a->argc < 4) return CLI_SHOWUSAGE;
 
 	    buf = (char *)calloc(1,1024);
 	    if (buf) {
 		CURLcode err;
-		send_curl_event(dest_url_event, (char *)a->argv[3], SALARA_CURLOPT_TIMEOUT, buf, 1024, &err, 0, 0);
+		int ssl=0, js=0;
+		if (strstr(dest_url_event,"https")) ssl=1;
+		if (strstr((char *)a->argv[3],"json")) js=1;
+		send_curl_event(dest_url_event, (char *)a->argv[4], SALARA_CURLOPT_TIMEOUT, buf, 1024, &err, ssl, js, 0);
 		ast_verbose(buf);
 		free(buf);
 		return CLI_SUCCESS;
@@ -3069,8 +3074,8 @@ s_route_record *rt=NULL, *nx=NULL;
     sprintf(path_name, "%s/%s", ast_config_AST_CONFIG_DIR, file_name);
 
     if (!(fp = fopen(path_name, "w"))) {
-	ast_verbose("[%s] Write config file '%s' error: %s\n", AST_MODULE, file_name, strerror(errno));
-	ast_log(LOG_ERROR, "[%s] Write config file '%s' error: %s\n", AST_MODULE, file_name, strerror(errno));
+	ast_verbose("[%s %s] Write config file '%s' error: %s\n", AST_MODULE, TimeNowPrn(), file_name, strerror(errno));
+	ast_log(LOG_ERROR, "[%s %s] Write config file '%s' error: %s\n", AST_MODULE, TimeNowPrn(), file_name, strerror(errno));
 	return -1;
     }
 
@@ -3332,7 +3337,7 @@ int act=0, lg = salara_verbose;
     }
 
     if (lg>1) {
-	ast_verbose("[%s] MakeAction : req_type=%d action_id=%d\n", AST_MODULE, type, act);
+	ast_verbose("[%s %s] MakeAction : req_type=%d action_id=%d\n", AST_MODULE, TimeNowPrn(), type, act);
 	ast_verbose(buf);
 	console=1;
     }
@@ -3397,7 +3402,7 @@ char *ustart=NULL, *uk_body=NULL;
 					memcpy(tp,uks,dl);
 					body_len = atoi(tp);
 					post_flag=1;
-					//if (salara_verbose) ast_verbose("[%s] Post data len:%d\n", AST_MODULE, body_len);
+					//if (salara_verbose) ast_verbose("[%s %s] Post data len:%d\n", AST_MODULE, TimeNowPrn(), body_len);
 				    }
 				}
 			    }
@@ -3519,7 +3524,7 @@ char *ustart=NULL, *uk_body=NULL;
 					}
 					if (i>1) ok=1;
 				    }
-				    //if (salara_verbose) ast_verbose("[%s] Post data:%s\n", AST_MODULE, uk_body);
+				    //if (salara_verbose) ast_verbose("[%s %s] Post data:%s\n", AST_MODULE, TimeNowPrn(), uk_body);
 				}
 			    }
 			}
@@ -3531,8 +3536,8 @@ char *ustart=NULL, *uk_body=NULL;
 		if (lg) {
 		    rtype = req_type;
 		    if (rtype >= MAX_ACT_TYPE) rtype=MAX_ACT_TYPE-1;
-		    ast_verbose("[%s] Action type '%s' (%d) with param : operator='%s' phone='%s' msg='%s' context='%s'\n",
-				AST_MODULE,
+		    ast_verbose("[%s %s] Action type '%s' (%d) with param : operator='%s' phone='%s' msg='%s' context='%s'\n",
+				AST_MODULE, TimeNowPrn(),
 				ActType[rtype],
 				rtype,
 				operator,
@@ -3554,43 +3559,43 @@ char *ustart=NULL, *uk_body=NULL;
 			delete_act(abc,1);
 		    }
 		    if (!check_stat(stat)) two++;
-		    if (lg) ast_verbose("[%s] Dest '%s' status (%d)\n", AST_MODULE, operator, stat);
+		    if (lg) ast_verbose("[%s %s] Dest '%s' status (%d)\n", AST_MODULE, TimeNowPrn(), operator, stat);
 		    if (req_type >= 2) {//get status:exten peer chan
 			two=0;
 			done=1;
 			sprintf(ack_status,"{\"result\":%d,\"text\":\"%s\"}", stat, ack_text);
 			write(ser->fd, ack_status, strlen(ack_status));
-			if (lg) ast_verbose("[%s] Send answer '%s' to rest client\n", AST_MODULE, ack_status);
+			if (lg) ast_verbose("[%s %s] Send answer '%s' to rest client\n", AST_MODULE, TimeNowPrn(), ack_status);
 			break;
 		    } else {
 			sprintf(ack_status,"{\"result\":%d,\"text\":\"%s\"}", stat, ack_text);
 			write(ser->fd, ack_status, strlen(ack_status));
-			if (lg) ast_verbose("[%s] Send answer '%s' to rest client\n", AST_MODULE, ack_status);
+			if (lg) ast_verbose("[%s %s] Send answer '%s' to rest client\n", AST_MODULE, TimeNowPrn(), ack_status);
 		    }
 		} else {
 		    write(ser->fd, answer_bad, strlen(answer_bad));
-		    if (lg) ast_verbose("[%s] Send answer '%s' to rest client\n", AST_MODULE, answer_bad);
+		    if (lg) ast_verbose("[%s %s] Send answer '%s' to rest client\n", AST_MODULE, TimeNowPrn(), answer_bad);
 		}
 	    } else {
 		write(ser->fd, answer_bad, strlen(answer_bad));
-		if (lg) ast_verbose("[%s] Error request parser\n", AST_MODULE);
+		if (lg) ast_verbose("[%s %s] Error request parser\n", AST_MODULE, TimeNowPrn());
 	    }
 
 	    if ((res>0) && !ok && lg) ast_verbose("%s\n", buf);
-	    else if (lg>1) ast_verbose("[%s] Data from rest client :\n%s\n", AST_MODULE, buf);
+	    else if (lg>1) ast_verbose("[%s %s] Data from rest client :\n%s\n", AST_MODULE, TimeNowPrn(), buf);
 
 	    if (errno != EINTR && errno != EAGAIN && errno != 0) {
-		if (lg) ast_verbose("[%s] Socket error reading data: '%s'\n", AST_MODULE, strerror(errno));
+		if (lg) ast_verbose("[%s %s] Socket error reading data: '%s'\n", AST_MODULE, TimeNowPrn(), strerror(errno));
 		done=1;
 	    }
 	    if (done) break;
 	}
 
-    } else if (lg) ast_verbose("[%s] Error calloc in cli_nitka (sock=%d)\n", AST_MODULE, ser->fd);
+    } else if (lg) ast_verbose("[%s %s] Error calloc in cli_nitka (sock=%d)\n", AST_MODULE, TimeNowPrn(), ser->fd);
 
 
     if (ser->fd > 0) {
-	if (lg>1) ast_verbose("[%s] Close client socket %d\n", AST_MODULE, ser->fd);
+	if (lg>1) ast_verbose("[%s %s] Close client socket %d\n", AST_MODULE, TimeNowPrn(), ser->fd);
 	shutdown(ser->fd, SHUT_RDWR);
 	close(ser->fd);
     }
@@ -3632,8 +3637,8 @@ struct ast_tcptls_session_instance *tcptls_session;
 pthread_t launched;
 
 
-/*    ast_verbose("[%s] srv_nitka listen port %d (sock=%d)\n",
-		AST_MODULE,
+/*    ast_verbose("[%s %s] srv_nitka listen port %d (sock=%d)\n",
+		AST_MODULE, TimeNowPrn(),
 		ast_sockaddr_port(&desc->local_address),
 		desc->accept_fd);*/
 
@@ -3647,15 +3652,15 @@ pthread_t launched;
 	fd = ast_accept(desc->accept_fd, &addr);
 	if (fd < 0) {
 	    if ((errno != EAGAIN) && (errno != EWOULDBLOCK) && (errno != EINTR) && (errno != ECONNABORTED)) {
-		ast_verbose("[%s] Accept failed: %s\n", AST_MODULE, strerror(errno));
+		ast_verbose("[%s %s] Accept failed: %s\n", AST_MODULE, TimeNowPrn(), strerror(errno));
 		break;
 	    }
 	    continue;
-	}// else ast_verbose("[%s] Accept cli_sock=%d\n", AST_MODULE, fd);
+	}// else ast_verbose("[%s %s] Accept cli_sock=%d\n", AST_MODULE, TimeNowPrn(), fd);
 	tcptls_session = ao2_alloc(sizeof(*tcptls_session), session_instance_destructor);
 	if (!tcptls_session) {
-	    ast_verbose("[%s] No memory for new session: %s\n", AST_MODULE, strerror(errno));
-	    if (close(fd)) ast_verbose("[%s] close() failed: %s\n", AST_MODULE, strerror(errno));
+	    ast_verbose("[%s %s] No memory for new session: %s\n", AST_MODULE, TimeNowPrn(), strerror(errno));
+	    if (close(fd)) ast_verbose("[%s %s] close() failed: %s\n", AST_MODULE, TimeNowPrn(), strerror(errno));
 	    continue;
 	}
 
@@ -3668,15 +3673,15 @@ pthread_t launched;
 	tcptls_session->client = 0;
 
 	if (ast_pthread_create_detached_background(&launched, NULL, cli_rest_open, tcptls_session)) {
-	    ast_verbose("[%s] Unable to launch helper thread: %s\n", AST_MODULE, strerror(errno));
+	    ast_verbose("[%s %s] Unable to launch helper thread: %s\n", AST_MODULE, TimeNowPrn(), strerror(errno));
 	    ao2_ref(tcptls_session, -1);
-	}// else ast_verbose("[%s] srv_nitka : Thread start for client '%s'\n", AST_MODULE, ast_sockaddr_stringify(&addr));
+	}// else ast_verbose("[%s %s] srv_nitka : Thread start for client '%s'\n", AST_MODULE, TimeNowPrn(), ast_sockaddr_stringify(&addr));
     }
     return NULL;
 }
 //----------------------------------------------------------------------
 //----------------------------------------------------------------------
-static int send_curl_event(char *url, char *body, int wait, char *str, int str_len, CURLcode *err, int crt, int prn)
+static int send_curl_event(char *url, char *body, int wait, char *str, int str_len, CURLcode *err, int crt, int js, int prn)
 {
 int ret=-1, dl;
 CURL *curl;
@@ -3684,7 +3689,7 @@ CURLcode res = CURLE_OK;
 struct MemoryStruct chunk;
 const char *uke=NULL;
 
-    if ((!body) || (!str)) return ret;
+    if ((!str) || (!str_len)) return ret;
 
     chunk.memory = (char *)malloc(1);
     chunk.size = 0;
@@ -3693,11 +3698,12 @@ const char *uke=NULL;
 
     curl = curl_easy_init();
     if (curl) {
+	curl_easy_setopt(curl, CURLOPT_URL, url);
 	struct curl_slist *headers=NULL;
 	//headers = curl_slist_append(headers, "Content-Type: application/x-www-form-urlencoded");
-	headers = curl_slist_append(headers, "Content-Type: text/plain");
-	curl_easy_setopt(curl, CURLOPT_URL, url);
-	if (body) {
+	if (js) headers = curl_slist_append(headers, "Content-Type: application/json");
+	   else headers = curl_slist_append(headers, "Content-Type: text/plain");
+	if (body) {//POST with json
 	    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, strlen(body));
 	    curl_easy_setopt(curl, CURLOPT_COPYPOSTFIELDS, body);
 	    //curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
@@ -3719,13 +3725,13 @@ const char *uke=NULL;
 	    if (dl >= str_len) dl = str_len-1;
 	    memcpy(str, (char *)chunk.memory, dl);
 	    //ret = CheckCurlEventAnswer((char *)chunk.memory, str);
-	    if (prn) ast_verbose("[%s] Curl answer :%.*s\n", AST_MODULE, chunk.size, (char *)chunk.memory);
+	    if (prn) ast_verbose("[%s %s] Curl_event answer :%.*s\n", AST_MODULE, TimeNowPrn(), chunk.size, (char *)chunk.memory);
 	    ret=0;
 	} else {
 	    uke = curl_easy_strerror(*err);
 	    dl = strlen(uke);
 	    if (dl >= str_len) dl = str_len-1;
-	    if (prn) ast_verbose("[%s] Curl Error : '%s' url=%s\n", AST_MODULE, uke, dest_url_event);
+	    if (prn) ast_verbose("[%s %s] Curl_event Error : '%s' url=%s\n", AST_MODULE, TimeNowPrn(), uke, dest_url_event);
 	    memcpy(str, uke, dl);
 	}
 	curl_slist_free_all(headers);
@@ -3766,7 +3772,7 @@ char *jbody=NULL;
 
     if (jbody) {
 	if (strstr(dest_url_event,"https:")) ssl=1;
-	ret = send_curl_event(dest_url_event, jbody, SALARA_CURLOPT_TIMEOUT, buf, buf_len, &err, ssl, 0);//&err, ssl, lg
+	ret = send_curl_event(dest_url_event, jbody, SALARA_CURLOPT_TIMEOUT, buf, buf_len, &err, ssl, 1, 0);//&err, ssl, json, lg
     }
 
     if (lg) ast_verbose("[%s %s] Send_to_CRM :\n\turl=%s\n\tpost=%s\n\tanswer=%s\n",
@@ -3887,8 +3893,8 @@ char *name="";
 		    name = strdupa(ast_channel_name(ast));
 		//ast_channel_unlock(ast);
 		if (stat > MAX_CHAN_STATE-1) stat=MAX_CHAN_STATE-1;
-		if (lg) ast_verbose("[%s] Periodics : total=%d channel=[%s] status=%d (%s) ast=%p\n",
-			    AST_MODULE,
+		if (lg) ast_verbose("[%s %s] Periodics : total=%d channel=[%s] status=%d (%s) ast=%p\n",
+			    AST_MODULE, TimeNowPrn(),
 			    cnt,
 			    name,
 			    stat,
@@ -3987,7 +3993,7 @@ static int load_module(void)
 int res = 0, lenc = -1;
 struct ast_sockaddr sami_desc_local_address_tmp;
 
-//    ast_verbose("[%s] Load for * version %s\n",AST_MODULE,ast_get_version_num());
+//    ast_verbose("[%s %s] Load for * version %s\n",AST_MODULE,TimeNowPrn(),ast_get_version_num());
 
     unload=0;
 
@@ -4028,7 +4034,7 @@ struct ast_sockaddr sami_desc_local_address_tmp;
 
 	if (ast_register_atexit(salara_atexit) < 0) {
 	    salara_atexit_registered = 0;
-	    ast_verbose("[%s] Unable to register ATEXIT\n",AST_MODULE);
+	    ast_verbose("[%s %s] Unable to register ATEXIT\n",AST_MODULE,TimeNowPrn());
 	} else salara_atexit_registered = 1;
 
 	memset(rest_server,0,PATH_MAX);
@@ -4039,7 +4045,7 @@ struct ast_sockaddr sami_desc_local_address_tmp;
 
 	if (ast_register_application(app_salara, app_salara_exec, app_salara_synopsys, app_salara_description) < 0) {
 	    salara_app_registered = 0;
-	    ast_verbose("[%s] Unable to register APP\n",AST_MODULE);
+	    ast_verbose("[%s %s] Unable to register APP\n",AST_MODULE,TimeNowPrn());
 	} else salara_app_registered = 1;
 
 
@@ -4065,7 +4071,7 @@ struct ast_sockaddr sami_desc_local_address_tmp;
 		pthread_attr_init(&threadAttr);
 		pthread_attr_setdetachstate(&threadAttr, PTHREAD_CREATE_DETACHED);
 		if (pthread_create(&http_tid, &threadAttr, send_by_event, &event_hdr)) {
-		    ast_verbose("[%s] Unable to launch http client thread: %s\n", AST_MODULE, strerror(errno));
+		    ast_verbose("[%s %s] Unable to launch http client thread: %s\n", AST_MODULE, TimeNowPrn(), strerror(errno));
 		    start_http_nitka=0;
 		}
 	    }/**/
@@ -4075,7 +4081,7 @@ struct ast_sockaddr sami_desc_local_address_tmp;
 
     if (reload) reload=0;
 
-//    ast_verbose("\t[v%s] Module '%s.so' loaded OK.\n", SALARA_VERSION, AST_MODULE);//, (int)salara_pid);
+//    ast_verbose("\t[v%s %s] Module '%s.so' loaded OK.\n", SALARA_VERSION, AST_MODULE, TimeNowPrn());//, (int)salara_pid);
 
     return res;//AST_MODULE_LOAD_SUCCESS;
 }
