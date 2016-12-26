@@ -20,9 +20,7 @@
 #include <netinet/in.h>
 #include <errno.h>
 #include <sys/time.h>
-#include <netdb.h>
 #include <arpa/inet.h>
-#include <ctype.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
@@ -54,7 +52,8 @@
 #define AST_MODULE "salara"
 #define AST_MODULE_DESC "Features: transfer call; make call; get status: exten.,peer,channel; send: command,message,post"
 #define DEF_DEST_NUMBER "1234"
-#define SALARA_VERSION "2.9"//23.12.2016
+#define SALARA_VERSION "3.0"//26.12.2016
+//"2.9"//23.12.2016
 //"2.8"//22.12.2016
 //"2.7"//21.12.2016
 //"2.6"//20.12.2016
@@ -185,8 +184,8 @@ static int salara_manager_registered = 0;
 static int salara_app_registered = 0;
 
 static char *app_salara = "salara";
-static char *app_salara_synopsys = "RouteSalara";
-static char *app_salara_description = "Salara transfer call function";
+static char *app_salara_synopsys = "Route++ salara";
+static char *app_salara_description = "Salara REST functions";
 
 static char dest_number[AST_MAX_EXTENSION] = "00";
 
@@ -2709,7 +2708,14 @@ int act, len=0;
 
 		add_act(act);
 
-		sprintf(buf,"Action: MessageSend\nActionID: %u\nTo: %s:%s\nFrom: %s\nBody: %s\n\n",
+		if (strchr((char *)a->argv[4],':'))
+		    sprintf(buf,"Action: MessageSend\nActionID: %u\nTo: %s\nFrom: %s\nBody: %s\n\n",
+			    act,
+			    a->argv[4],
+			    a->argv[3],
+			    a->argv[5]);
+		else
+		    sprintf(buf,"Action: MessageSend\nActionID: %u\nTo: %s:%s\nFrom: %s\nBody: %s\n\n",
 			    act,
 			    StrLwr(Tech),
 			    a->argv[4],
@@ -2746,7 +2752,7 @@ char *buf=NULL;
 	    return NULL;
 	case CLI_HANDLER:
 
-	    if (a->argc < 4) return CLI_SHOWUSAGE;
+	    if (a->argc < 5) return CLI_SHOWUSAGE;
 
 	    buf = (char *)calloc(1,1024);
 	    if (buf) {
@@ -2755,7 +2761,7 @@ char *buf=NULL;
 		if (strstr(dest_url_event,"https")) ssl=1;
 		if (strstr((char *)a->argv[3],"json")) js=1;
 		send_curl_event(dest_url_event, (char *)a->argv[4], SALARA_CURLOPT_TIMEOUT, buf, 1024, &err, ssl, js, 0);
-		ast_verbose(buf);
+		ast_verbose("%s\n",buf);
 		free(buf);
 		return CLI_SUCCESS;
 	    }
@@ -3273,8 +3279,8 @@ int act=0, lg = salara_verbose;
 	    sprintf(buf,"Action: MessageSend\nActionID: %u\nTo: %s:%s\nFrom: %s\nBody: %s\n\n",
 		act,
 		StrLwr(Tech),
-		to,
-		from,
+		from,//TO
+		to,//FROM
 		mess);
 	break;
 	case 2://exten. status
@@ -3507,7 +3513,12 @@ char *ustart=NULL, *uk_body=NULL;
 		//------------------------------------------------------
 		two=0;
 		if (req_type>2) aid = MakeAction(req_type,operator,phone,msg,cont);//get status exten.,peer,channel
-			   else aid = MakeAction(2,operator,phone,msg,cont);//get status exten.
+		else {
+		//    if (req_type == 1)//send msg
+		//	aid = MakeAction(2,phone,operator,msg,cont);//get status exten. (phone)
+		//    else
+			aid = MakeAction(2,operator,phone,msg,cont);//get status exten. (operator)
+		}
 		usleep(1000);
 		memset(ack_text,0,SIZE_OF_RESP);
 		if (aid>0) {
@@ -3518,7 +3529,12 @@ char *ustart=NULL, *uk_body=NULL;
 			delete_act(abc,1);
 		    }
 		    if (!check_stat(stat)) two++;
-		    if (lg) ast_verbose("[%s %s] Dest '%s' status (%d)\n", AST_MODULE, TimeNowPrn(), operator, stat);
+		    if (lg) {
+			//if (req_type != 1)//send msg
+			    ast_verbose("[%s %s] Dest '%s' status (%d)\n", AST_MODULE, TimeNowPrn(), operator, stat);
+			//else
+			//    ast_verbose("[%s %s] Dest '%s' status (%d)\n", AST_MODULE, TimeNowPrn(), phone, stat);
+		    }
 		    if (req_type >= 2) {//get status:exten peer chan
 			two=0;
 			done=1;
@@ -3563,7 +3579,10 @@ char *ustart=NULL, *uk_body=NULL;
 
 
     if ((ok) && (two) && (req_type < 2)) {
-	ret = MakeAction(req_type, operator, phone, msg, cont);
+	//if (req_type == 1)
+	//    ret = MakeAction(req_type, phone, operator, msg, cont);
+	//else
+	    ret = MakeAction(req_type, operator, phone, msg, cont);
     }
 
     return ret;
