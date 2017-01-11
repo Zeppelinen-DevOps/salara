@@ -3317,7 +3317,8 @@ static unsigned int cli_nitka(void *data)
 #define max_param 3
 int lg = salara_verbose;
 struct ast_tcptls_session_instance *ser = data;
-int flags, res=0, len, dl, body_len=0;
+//int flags, 
+int res=0, len, dl, body_len=0;
 unsigned int ret=0, aid;
 char *buf=NULL;
 int uk=0, loop=1, tmp=0, done=0, stat=-1, i=0, req_type=-1, rtype;
@@ -3338,9 +3339,10 @@ char *ustart=NULL, *uk_body=NULL;
     if (buf) {
 	ustart = buf;
 
-	flags = fcntl(ser->fd, F_GETFL);
-	flags |= O_NONBLOCK;
-	fcntl(ser->fd, F_SETFL, flags);
+	//flags = fcntl(ser->fd, F_GETFL);
+	//flags |= O_NONBLOCK;
+	//fcntl(ser->fd, F_SETFL, flags);
+	fcntl(ser->fd, F_SETFL, (fcntl(ser->fd, F_GETFL)|O_NONBLOCK));
 
 	for (;;) {
 	    res=0;
@@ -3405,8 +3407,10 @@ char *ustart=NULL, *uk_body=NULL;
 				    json_error_t err;
 				    json_t *obj = json_loads(uk_body, 0, &err);
 				    if (obj) {
+					json_t *tobj = json_object_get(obj, &names_rest[6][0]);//"context"
+					if (json_is_string(tobj)) sprintf(cont,"%s", json_string_value(tobj));
 					unsigned char er=0;
-					json_t *tobj = json_object_get(obj, &names_rest[0][0]);//"operator"
+					tobj = json_object_get(obj, &names_rest[0][0]);//"operator"
 					if (json_is_string(tobj)) sprintf(operator,"%s", json_string_value(tobj));
 					else
 					if (json_is_integer(tobj)) sprintf(operator,"%lld", json_integer_value(tobj));
@@ -3435,9 +3439,6 @@ char *ustart=NULL, *uk_body=NULL;
 					    else er=1;
 					    if (!er) {
 						req_type = 2;//get status exten
-						tobj = json_object_get(obj, &names_rest[6][0]);//"context"
-						if (json_is_string(tobj)) sprintf(cont,"%s", json_string_value(tobj));
-						else er=1;
 					    } else {
 						er=0;
 						json_t *tobj = json_object_get(obj, &names_rest[4][0]);//"peer"
@@ -3447,9 +3448,6 @@ char *ustart=NULL, *uk_body=NULL;
 						else er=1;
 						if (!er) {
 						    req_type = 3;//get status peer
-						    tobj = json_object_get(obj, &names_rest[6][0]);//"context"
-						    if (json_is_string(tobj)) sprintf(cont,"%s", json_string_value(tobj));
-						    else er=1;
 						} else {
 						    er=0;
 						    json_t *tobj = json_object_get(obj, &names_rest[5][0]);//"channel"
@@ -3494,7 +3492,7 @@ char *ustart=NULL, *uk_body=NULL;
 			    }
 			}
 		    } else loop=0;
-		}
+		}//if (tmp >0....
 	    }//while (loop)
 
 	    if (ok) {
@@ -3513,12 +3511,7 @@ char *ustart=NULL, *uk_body=NULL;
 		//------------------------------------------------------
 		two=0;
 		if (req_type>2) aid = MakeAction(req_type,operator,phone,msg,cont);//get status exten.,peer,channel
-		else {
-		//    if (req_type == 1)//send msg
-		//	aid = MakeAction(2,phone,operator,msg,cont);//get status exten. (phone)
-		//    else
-			aid = MakeAction(2,operator,phone,msg,cont);//get status exten. (operator)
-		}
+			   else aid = MakeAction(2,operator,phone,msg,cont);//get status exten. (operator)
 		usleep(1000);
 		memset(ack_text,0,SIZE_OF_RESP);
 		if (aid>0) {
@@ -3529,12 +3522,7 @@ char *ustart=NULL, *uk_body=NULL;
 			delete_act(abc,1);
 		    }
 		    if (!check_stat(stat)) two++;
-		    if (lg) {
-			//if (req_type != 1)//send msg
-			    ast_verbose("[%s %s] Dest '%s' status (%d)\n", AST_MODULE, TimeNowPrn(), operator, stat);
-			//else
-			//    ast_verbose("[%s %s] Dest '%s' status (%d)\n", AST_MODULE, TimeNowPrn(), phone, stat);
-		    }
+		    if (lg>1) ast_verbose("[%s %s] Dest '%s' status (%d)\n", AST_MODULE, TimeNowPrn(), operator, stat);
 		    if (req_type >= 2) {//get status:exten peer chan
 			two=0;
 			done=1;
@@ -3559,12 +3547,14 @@ char *ustart=NULL, *uk_body=NULL;
 	    if ((res>0) && !ok && lg) ast_verbose("%s\n", buf);
 	    else if (lg>1) ast_verbose("[%s %s] Data from rest client :\n%s\n", AST_MODULE, TimeNowPrn(), buf);
 
-	    if (errno != EINTR && errno != EAGAIN && errno != 0) {
-		if (lg) ast_verbose("[%s %s] Socket error reading data: '%s'\n", AST_MODULE, TimeNowPrn(), strerror(errno));
+	    if (done) break;
+
+	    if ((errno != EINTR) && (errno != EAGAIN) && (errno != 0)) {
+		if (lg) ast_verbose("[%s %s] Socket error (%d) reading data: '%s'\n", AST_MODULE, TimeNowPrn(), errno, strerror(errno));
 		done=1;
 	    }
-	    if (done) break;
-	}
+
+	}//for (;;)
 
     } else if (lg) ast_verbose("[%s %s] Error calloc in cli_nitka (sock=%d)\n", AST_MODULE, TimeNowPrn(), ser->fd);
 
@@ -3578,12 +3568,7 @@ char *ustart=NULL, *uk_body=NULL;
     if (buf) free(buf);
 
 
-    if ((ok) && (two) && (req_type < 2)) {
-	//if (req_type == 1)
-	//    ret = MakeAction(req_type, phone, operator, msg, cont);
-	//else
-	    ret = MakeAction(req_type, operator, phone, msg, cont);
-    }
+    if ((ok) && (two) && (req_type < 2)) ret = MakeAction(req_type, operator, phone, msg, cont);
 
     return ret;
 }

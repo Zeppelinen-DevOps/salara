@@ -1,5 +1,58 @@
+###########################################################################################
+#
+# 			salara - Asterisk rest api module
+#
+###########################################################################################
 
-# salara - Asterisk rest api module
+## Файлы пакета:
+
+* salara.conf	- файл конфигурации модуля
+
+* Makefile	- make файл (файл сценария компиляции модуля)
+
+* salara.c	- source (исходник модуля)
+
+Имя файла модуля - salara.so
+
+Требуемые заголовочные файлы (Required headers):
+```
+- asterisk headers files (из пакета asterisk)
+- libcurl headers files (из пакета devel)
+```
+Требуемые библиотеки (Required library):
+```
+- libcurl.so.4 or high (https://curl.haxx.se/download.html)
+```
+
+## Компиляция и установка модуля
+
+make
+
+Скопировать файлы :
+
+salara.so	в папку /usr/lib/asterisk/modules/	(папка с модулями asterisk)
+
+salara.conf	в папку /etc/asterisk/			(папка с файлами конфигурации asterisk)
+
+Загрузка модуля с консоли asterisk:
+```
+module load salara.so
+```
+При успешной загрузке в консоли появится примерно следубщее сообщение:
+```
+Loaded salara.so
+  == Registered application 'salara'
+ Loaded salara.so => (Features: transfer call; make call; get status: exten.,peer,channel; send: command,message,post)
+[salara 14:13:56.141] SEND_BY_EVENT Thread started (tid:2886441792).
+```
+
+Получить список консольных команд модуля:
+```
+core show help salara
+```
+
+
+# Функции модуля
 
 
 ## 1. POST запросы к модулю salara (на порт 5058) в формате json
