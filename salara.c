@@ -3083,6 +3083,10 @@ s_route_record *rt=NULL, *nx=NULL;
     len += fprintf(fp, "[event]\n");
     len += fprintf(fp, "verbose=%d\n", salara_verbose);
     len += fprintf(fp, "newexten=%d\n", newexten);
+    len += fprintf(fp,  ";0 - not used 'Newexten' type event\n"\
+			";1 - used for transfer call with status UP\n"\
+			";2 - used for transfer call with all status\n"\
+			";3 - used for all call with all status\n");
     len += fprintf(fp, FORMAT_SEPARATOR_LINE);
 
     len += fprintf(fp, "[url]\n");
