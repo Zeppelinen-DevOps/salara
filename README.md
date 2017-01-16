@@ -30,9 +30,9 @@ make
 
 Скопировать файлы :
 
-salara.so	в папку /usr/lib/asterisk/modules/	(папка с модулями asterisk)
+* salara.so	в папку /usr/lib/asterisk/modules/	(папка с модулями asterisk)
 
-salara.conf	в папку /etc/asterisk/			(папка с файлами конфигурации asterisk)
+* salara.conf	в папку /etc/asterisk/			(папка с файлами конфигурации asterisk)
 
 Загрузка модуля с консоли asterisk:
 ```

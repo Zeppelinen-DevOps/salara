@@ -42,7 +42,7 @@
 #include <asterisk/threadstorage.h>
 #include <asterisk/test.h>
 #include <asterisk/tcptls.h>
-#include "asterisk/format_cache.h"
+//#include "asterisk/format_cache.h"
 
 #undef DO_SSL
 #define ver13
@@ -235,6 +235,7 @@ static const char *S_Success = "Success";
 static const char *S_PeerStatus = "PeerStatus:";
 static const char *S_Channel = "Channel:";
 static const char *S_Exten = "Exten:";
+static const char *S_Extension = "Extension:";
 static const char *S_CallerIDNum = "CallerIDNum:";
 static const char *S_ChannelState = "ChannelState:";
 static const char *S_Application ="Application:";
@@ -760,7 +761,7 @@ s_act_list *bf=NULL, *nx=NULL;
 	free(arcd); arcd = NULL;
 	ret=0;
 
-	if (lg>2) {//>=2
+	if (lg>=2) {//>=2
 	    ast_verbose("[%s %s] delete_act : first=%p end=%p counter=%u\n",
 			AST_MODULE, TimeNowPrn(),
 			(void *)act_hdr.first,
@@ -891,7 +892,7 @@ s_act_list *ret=NULL, *temp=NULL, *tmp=NULL;
 	    }
 	}
 
-	if (lg>2) {//>=2
+	if (lg>=2) {//>=2
 	    if (ret)
 		ast_verbose("[%s %s] find_act : first=%p end=%p counter=%u\n"
 			    "\t-- rec=%p before=%p next=%p ind=%u status=%d resp='%s'\n",
@@ -953,7 +954,7 @@ s_act *str=NULL;
 	    } else free(rec);
 	}
 
-	if (lg>2) {//>=2
+	if (lg>=2) {//>=2
 	    ast_verbose("[%s %s] add_act : first=%p end=%p counter=%u\n",
 			AST_MODULE, TimeNowPrn(),
 			(void *)act_hdr.first,
@@ -1798,7 +1799,7 @@ static int hook_callback(int category, const char *event, char *body);
 
 static struct manager_custom_hook hook = {
     .file = __FILE__,
-    .helper = hook_callback,
+    .helper = &hook_callback,
 };
 
 //----------------------------------------------------------------------
@@ -2085,6 +2086,7 @@ CURLcode er;
 #endif
     }
     aid = MakeAction(2, dest_number, "", "", context);
+    //aid = MakeAction(2, dest_number, "", "", "");
 
     if (aid>=0) {
 	abc = find_act(aid);
@@ -2118,7 +2120,7 @@ CURLcode er;
 		dest_number,
 		res_transfer,
 		stat,
-		ChanStateName[stat]);
+		&ChanStateName[stat][0]);
 	ast_verbose("[%s %s] application stop.\n", AST_MODULE, TimeNowPrn());
     }
 
@@ -2135,6 +2137,8 @@ char stx[SIZE_OF_RESP]={0};
 unsigned char i=0;
 
 //    if ( (strstr(event,"RTCP")) || (strstr(event,"Cdr")) ) return 0;
+
+//ast_verbose("[%s %s] cat=%d event='%s' body=[\n%s]\n", AST_MODULE, TimeNowPrn(), category, event, body);
 
     while (i<MAX_EVENT_NAME) {
 	if (!strcmp(event,EventName[i])) {
@@ -2171,8 +2175,9 @@ unsigned char i=0;
 			    uk += strlen(S_Status); uk2 = strstr(uk, "\r\n"); if (uk2 == NULL) uk2 = strchr(uk,'\0');
 			    if (uk2) {
 				memset(stx,0,SIZE_OF_RESP); dl = uk2 - uk; if (dl>=SIZE_OF_RESP) dl = SIZE_OF_RESP-1;
-				memcpy(stx, uk, dl); sti = atoi(stx); uk = strstr(hook_tmp_str, S_StatusText);
-				if (uk) { uk += strlen(S_StatusText); if (*uk == ' ') uk++; rdy=1; }
+				memcpy(stx, uk, dl); sti = atoi(stx); rdy=1;
+				uk = strstr(hook_tmp_str, S_StatusText);
+				if (uk) { uk += strlen(S_StatusText); if (*uk == ' ') uk++; }
 			    }
 			} else {
 			    uk = strstr(hook_tmp_str,S_PeerStatus);
@@ -2195,11 +2200,17 @@ unsigned char i=0;
 			    }
 			}
 			if (rdy) {
-			    uk2 = strchr(uk, '\n'); if (uk2) { if (*(uk2-1) == '\r') uk2--; } else uk2 = strchr(uk,'\0');
-			    if (uk2) {
-				memset(stx,0,SIZE_OF_RESP); dl = uk2 - uk; if (dl>=SIZE_OF_RESP) dl = SIZE_OF_RESP-1; memcpy(stx, uk, dl);
-				if (update_act_by_index(id, sti, stx)) if (lg>=2) ast_verbose("[hook] event='%s' action_id=%d not found in act_list\n", event, id);
+			    memset(stx,0,SIZE_OF_RESP);
+			    if (uk) {
+				uk2 = strchr(uk, '\n'); if (uk2) { if (*(uk2-1) == '\r') uk2--; } else uk2 = strchr(uk,'\0');
+				if (uk2) {
+				    dl = uk2 - uk; if (dl>=SIZE_OF_RESP) dl = SIZE_OF_RESP-1;
+				    memcpy(stx, uk, dl);
+				}
 			    }
+//if (lg) ast_verbose("[hook] event='%s' action_id=%d stat=%d stat_text='%s'\n", event, id, sti, stx);
+			    if (update_act_by_index(id, sti, stx) != 0)
+				if (lg>=2) ast_verbose("[hook] event='%s' action_id=%d not found in act_list\n", event, id);
 			}
 		    }
 		} else if (lg) ast_verbose("[%s %s] event='%s' ActionID not found\n", AST_MODULE, TimeNowPrn(), event);
@@ -2207,8 +2218,8 @@ unsigned char i=0;
 	    case 1://Hangup
 	    case 2://Newchannel
 	    case 3://Newexten
-		if (lg>1) ast_verbose("%s",hook_tmp_str);
-		int cs=100;
+		if (lg>2) ast_verbose("%s",hook_tmp_str);
+		int cs = MAX_CHAN_STATE-1;
 		char chan[AST_CHANNEL_NAME]; char exten[AST_MAX_EXTENSION]; 
 		char caller[AST_MAX_EXTENSION]; char chan_state[AST_MAX_EXTENSION]; char app[AST_MAX_EXTENSION];
 		memset(chan,0,AST_CHANNEL_NAME); memset(exten,0,AST_MAX_EXTENSION);
@@ -2217,30 +2228,39 @@ unsigned char i=0;
 		if (uk) {
 		    uk += strlen(S_Channel); if (*uk == ' ') uk++; uk2 = strstr(uk,"\r\n");
 		    if (uk2) {
-			dl = uk2 - uk; if (dl >= AST_CHANNEL_NAME) dl=AST_CHANNEL_NAME-1; memcpy(chan, uk, dl);
+			dl = uk2 - uk; if (dl >= AST_CHANNEL_NAME) dl=AST_CHANNEL_NAME-1;
+			memcpy(chan, uk, dl);
 		    }
 		}
+		uk2=NULL;
 		uk = strstr(hook_tmp_str, S_Exten);
 		if (uk) {
 		    uk += strlen(S_Exten); if (*uk == ' ') uk++; uk2 = strstr(uk,"\r\n");
-		    if (uk2) {
-			dl = uk2 - uk; if (dl >= AST_MAX_EXTENSION) dl=AST_MAX_EXTENSION-1; memcpy(exten, uk, dl);
+		} else {
+		    uk = strstr(hook_tmp_str, S_Extension);
+		    if (uk) {
+			uk += strlen(S_Extension); if (*uk == ' ') uk++; uk2 = strstr(uk,"\r\n");
 		    }
 		}
+		if (uk && uk2) {
+		    dl = uk2 - uk; if (dl >= AST_MAX_EXTENSION) dl=AST_MAX_EXTENSION-1;
+		    memcpy(exten, uk, dl);
+		}
+
 		uk = strstr(hook_tmp_str, S_CallerIDNum);
 		if (uk) {
 		    uk += strlen(S_CallerIDNum); if (*uk == ' ') uk++; uk2 = strstr(uk,"\r\n");
 		    if (uk2) {
-			dl = uk2 - uk; if (dl >= AST_MAX_EXTENSION) dl=AST_MAX_EXTENSION-1; memcpy(caller, uk, dl);
+			dl = uk2 - uk; if (dl >= AST_MAX_EXTENSION) dl=AST_MAX_EXTENSION-1;
+			memcpy(caller, uk, dl);
 		    }
 		}
 		uk = strstr(hook_tmp_str, S_ChannelState);
 		if (uk) {
 		    uk += strlen(S_ChannelState); if (*uk == ' ') uk++; uk2 = strstr(uk,"\r\n");
 		    if (uk2) {
-			dl = uk2 - uk; if (dl >= AST_MAX_EXTENSION) dl=AST_MAX_EXTENSION-1; 
+			dl = uk2 - uk; if (dl >= AST_MAX_EXTENSION) dl=AST_MAX_EXTENSION-1;
 			memcpy(chan_state, uk, dl); cs = atoi(chan_state);
-			if ((cs<0) || (cs>=MAX_CHAN_STATE)) cs = MAX_CHAN_STATE-1;
 		    }
 		}
 		uk = strstr(hook_tmp_str, S_Application);
@@ -2252,8 +2272,10 @@ unsigned char i=0;
 		    }
 		}
 
-		if (lg>1) ast_verbose("[%s %s] '%s' event : chan='%s' caller='%s' exten='%s' state=%d(%s) app='%s'\n",
-				AST_MODULE, TimeNowPrn(), event, chan, caller, exten, cs, ChanStateName[cs], app);
+		if ((cs<0) || (cs>=MAX_CHAN_STATE)) cs = MAX_CHAN_STATE-1;
+
+		if (lg>=2) ast_verbose("[%s %s] '%s' event : chan='%s' caller='%s' exten='%s' state=%d(%s) app='%s'\n",
+				AST_MODULE, TimeNowPrn(), event, chan, caller, exten, cs, &ChanStateName[cs][0], app);
 		if (tp==1) {//Hangup
 		    if ( (strlen(chan)) && (strlen(exten)) && (strlen(caller)) ) {
 			if (find_chan(chan, caller, exten, 1)) add_event_list(make_chan_event(tp, chan, caller, exten, cs));
@@ -2293,7 +2315,7 @@ unsigned char i=0;
 		default : if (lg) ast_verbose("[%s %s] Unknown event='%s' body=[\n%s]\n",AST_MODULE,TimeNowPrn(),event,hook_tmp_str);
 	}//switch
 
-	if ((lg>=2) && (!console)) ast_verbose("[%s %s] event='%s' body=[\n%s]\n",AST_MODULE,TimeNowPrn(),event,hook_tmp_str);
+	if ((lg>2) && (!console)) ast_verbose("[%s %s] event='%s' body=[\n%s]\n",AST_MODULE,TimeNowPrn(),event,hook_tmp_str);
 	memset(hook_tmp_str,0,max_buf_size);
     }//if (done)
 
@@ -3321,7 +3343,7 @@ static unsigned int cli_nitka(void *data)
 #define max_param 3
 int lg = salara_verbose;
 struct ast_tcptls_session_instance *ser = data;
-//int flags, 
+int flags;
 int res=0, len, dl, body_len=0;
 unsigned int ret=0, aid;
 char *buf=NULL;
@@ -3343,10 +3365,10 @@ char *ustart=NULL, *uk_body=NULL;
     if (buf) {
 	ustart = buf;
 
-	//flags = fcntl(ser->fd, F_GETFL);
-	//flags |= O_NONBLOCK;
-	//fcntl(ser->fd, F_SETFL, flags);
-	fcntl(ser->fd, F_SETFL, (fcntl(ser->fd, F_GETFL)|O_NONBLOCK));
+	flags = fcntl(ser->fd, F_GETFL);
+	flags |= O_NONBLOCK;
+	fcntl(ser->fd, F_SETFL, flags);
+	//fcntl(ser->fd, F_SETFL, (fcntl(ser->fd, F_GETFL)|O_NONBLOCK));
 
 	for (;;) {
 	    res=0;
@@ -3516,7 +3538,7 @@ char *ustart=NULL, *uk_body=NULL;
 		two=0;
 		if (req_type>2) aid = MakeAction(req_type,operator,phone,msg,cont);//get status exten.,peer,channel
 			   else aid = MakeAction(2,operator,phone,msg,cont);//get status exten. (operator)
-		usleep(1000);
+		usleep(2000);
 		memset(ack_text,0,SIZE_OF_RESP);
 		if (aid>0) {
 		    s_act_list *abc = find_act(aid);
