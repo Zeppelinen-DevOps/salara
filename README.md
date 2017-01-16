@@ -18,10 +18,12 @@
 ```
 - asterisk headers files (из пакета asterisk)
 - libcurl headers files (из пакета devel)
+- libjansson headers files (из пакета devel)
 ```
 Требуемые библиотеки (Required library):
 ```
 - libcurl.so.4 or high (https://curl.haxx.se/download.html)
+- libjansson.so.4 or high (http://www.digip.org/jansson/)
 ```
 
 ## Компиляция и установка модуля
