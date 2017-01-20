@@ -188,7 +188,7 @@ core show help salara
 ```
 или такой
 ```
-{"name":"Newexten","chan":"SIP/8003-00000023","caller":"8003","exten":"0000","state":"UP"} - соединение с номером "0000"
+{"name":"Newexten","chan":"SIP/8003-00000023","caller":"8003","exten":"0000","state":"UP","app":"Playback"} - соединение с номером "0000"
 ```
 сервер (CRM) должен прислать ответ примерно такого вида :
 ```
