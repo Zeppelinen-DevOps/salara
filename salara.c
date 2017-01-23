@@ -172,7 +172,7 @@ static unsigned char newchannel = 0;
 static unsigned char hangup = 0;
 static unsigned char newexten = 0;
 static unsigned char console = 0;
-static unsigned char dirty=1;//clear lost chan_records
+static unsigned char dirty=0;//clear lost chan_records
 static unsigned char start_http_nitka = 0;
 static unsigned char stop_http_nitka = 0;
 static pthread_t http_tid;
@@ -562,11 +562,11 @@ char *stc=NULL, *ste=NULL, *stcaller=NULL;
 	    }
 	}
 
-	if (lg>1) {//>2
-	    if (lg>2) ast_verbose("[%s %s] add_chan : first=%p end=%p counter=%d (chan='%s' ext='%s' caller='%s' ast=%p)\n",//>2
+	if (lg>1) {//>1
+	    if (lg>2) ast_verbose("[%s %s] ADD_CHAN : first=%p end=%p counter=%d (chan='%s' ext='%s' caller='%s' ast=%p)\n",//>2
 			AST_MODULE, TimeNowPrn(), (void *)chan_hdr.first, (void *)chan_hdr.end, chan_hdr.counter,
 			nchan, ext, caller, data);
-	    if (ret) ast_verbose("[%s %s] add_chan : rec=%p before=%p next=%p chan='%s' ext='%s' caller='%s' ast=%p\n",
+	    if (ret) ast_verbose("[%s %s] ADD_CHAN : rec=%p before=%p next=%p chan='%s' ext='%s' caller='%s' ast=%p\n",
 			AST_MODULE, TimeNowPrn(), (void *)ret, (void *)ret->before, (void *)ret->next,
 			ret->chan, ret->exten, ret->caller, ret->ast);
 	}
@@ -613,15 +613,15 @@ s_chan_record *bf=NULL, *nx=NULL;
 	free(rcd); //rcd = NULL;
 	ret=0;
 
-	if (lg>1) {//>2
-	    ast_verbose("[%s %s] del_chan : rec=%p first=%p end=%p counter=%d\n",
+	if ((lg>1) || (chan_hdr.counter>0))
+		ast_verbose("[%s %s] DEL_CHAN : rec=%p first=%p end=%p counter=%d\n",
 			AST_MODULE,
 			TimeNowPrn(),
 			(void *)rcd,
 			(void *)chan_hdr.first,
 			(void *)chan_hdr.end,
 			chan_hdr.counter);
-	}
+	//}
 
     if (withlock) ast_mutex_unlock(&chan_lock);
 
@@ -661,15 +661,15 @@ char *nc=NULL;
 	    }
 	}
 
-	if (lg>1) {//>2
+	if (lg>1) {//>1
 	    if (ret)
-		ast_verbose("[%s %s] update_chan : first=%p end=%p counter=%d chan='%s' exten='%s' caller='%s' ast=%p, record found %p\n",
+		ast_verbose("[%s %s] UPDATE_CHAN : first=%p end=%p counter=%d chan='%s' exten='%s' caller='%s' ast=%p, record found %p\n",
 				AST_MODULE, TimeNowPrn(),
 				(void *)chan_hdr.first, (void *)chan_hdr.end, chan_hdr.counter,
 				nchan, ext, caller, ret->ast,
 				(void *)ret);
 	    else
-		if (lg>2) ast_verbose("[%s %s] update_chan : first=%p end=%p counter=%d chan='%s' exten='%s' caller='%s', no valid record found\n",
+		if (lg>2) ast_verbose("[%s %s] UPDATE_CHAN : first=%p end=%p counter=%d chan='%s' exten='%s' caller='%s', no valid record found\n",
 				AST_MODULE, TimeNowPrn(),
 				(void *)chan_hdr.first, (void *)chan_hdr.end, chan_hdr.counter,
 				nchan, ext, caller);
@@ -704,34 +704,38 @@ s_chan_record *ret=NULL, *temp=NULL, *tmp=NULL;
 	    }
 	}
 
-	if (lg>1) {//>2
-	    if (ret)
-		ast_verbose("[%s %s] find_chan : first=%p end=%p counter=%d chan='%s' exten='%s' caller='%s' ast=%p, record found %p\n",
+	if (ret) {
+	    if (lg>1) ast_verbose("[%s %s] FIND_CHAN : first=%p end=%p counter=%d chan='%s' exten='%s' caller='%s' ast=%p, record found %p (with_del=%d)\n",
 			AST_MODULE, TimeNowPrn(),
 			(void *)chan_hdr.first, (void *)chan_hdr.end, chan_hdr.counter,
 			nchan, ext, caller, ret->ast,
-			(void *)ret);
-	    else
-		ast_verbose("[%s %s] find_chan : first=%p end=%p counter=%d chan='%s' exten='%s' caller='%s', record not found\n",
+			(void *)ret,
+			with_del);
+	    if (with_del) del_chan_record(ret, 0);
+	} else {
+	    if (lg>2) ast_verbose("[%s %s] FIND_CHAN : first=%p end=%p counter=%d chan='%s' exten='%s' caller='%s', record not found (with_del=%d)\n",
 			AST_MODULE, TimeNowPrn(),
 			(void *)chan_hdr.first, (void *)chan_hdr.end, chan_hdr.counter,
-			nchan, ext, caller);
+			nchan, ext, caller, with_del);
 	}
+/*
 	if (ret) {
 	    if (ret->ast) {
-		if (lg>2) ast_verbose("[%s %s] find_chan : chan=[%s] exten=[%s] caller=[%s] ast=%p\n",
+		if (lg>2) ast_verbose("[%s %s] FIND_CHAN : chan=[%s] exten=[%s] caller=[%s] ast=%p (with_del=%d)\n",
 			AST_MODULE,
 			TimeNowPrn(),
 			nchan,
 			ext,
 			caller,
-			(void *)ret->ast);
+			(void *)ret->ast,
+			with_del);
 	    } else {
-		if (lg>2) ast_verbose("[%s %s] find_chan : record found at %p, but ast=NULL -> delete record !\n",
-			AST_MODULE, TimeNowPrn(), (void *)ret);
+		if (lg>2) ast_verbose("[%s %s] FIND_CHAN : record found at %p, but ast=NULL -> delete record ! (with_del=%d)\n",
+			AST_MODULE, TimeNowPrn(), (void *)ret, with_del);
 	    }
-	    if (with_del) del_chan_record(ret, 0);
+	    //if (with_del) del_chan_record(ret, 0);
 	}
+*/
 
     ast_mutex_unlock(&chan_lock);
 
@@ -1277,7 +1281,7 @@ static char *cli_salara_send_msg(struct ast_cli_entry *e, int cmd, struct ast_cl
 static char *cli_salara_send_post(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a);
 //----------------------------------------------------------------------
 static struct ast_cli_entry cli_salara[] = {
-    AST_CLI_DEFINE(cli_salara_info, "Show Salara module information/configuration/route"),
+    AST_CLI_DEFINE(cli_salara_info, "Show Salara module information/configuration/route/chan_records"),
     AST_CLI_DEFINE(cli_salara_set_verbose, "Off/On/Debug/Dump verbose level"),
     AST_CLI_DEFINE(cli_salara_set_route, "Add caller:called to route table"),
     AST_CLI_DEFINE(cli_salara_send_cmd, "Send AMI Command"),
@@ -1490,9 +1494,9 @@ char *uk=NULL, *uk2=NULL;
 char stx[SIZE_OF_RESP]={0};
 unsigned char i=0;
 
-//    if ( (strstr(event,"RTCP")) || (strstr(event,"Cdr")) ) return 0;
+//if ( (strstr(event,"RTCP")) || (strstr(event,"Cdr")) || (strstr(event,"VarSet")) ) return 0;
 
-//ast_verbose("[%s %s] cat=%d event='%s' body=[\n%s]\n", AST_MODULE, TimeNowPrn(), category, event, body);
+//if (salara_verbose) ast_verbose("[%s %s] cat=%d event='%s' body=[\n%s]\n", AST_MODULE, TimeNowPrn(), category, event, body);
 
     while (i<MAX_EVENT_NAME) {
 	if (!strcmp(event,EventName[i])) {
@@ -1509,13 +1513,17 @@ unsigned char i=0;
 //    return 0;
 
     if ( (strlen(hook_tmp_str) + strlen(body)) >= max_buf_size ) {
-	if (lg) ast_verbose("<%s>\n<%s>\n",hook_tmp_str,body);
+	if (lg) ast_verbose("hook_callback error :<%s>\n<%s>\n",hook_tmp_str,body);
 	memset(hook_tmp_str,0,max_buf_size);
     }
     strcat(hook_tmp_str, body);
     if (strstr(hook_tmp_str, "\r\n\r\n")) done=1;
 
     if (done) {
+
+//if (lg) ast_verbose("[%s %s] event='%s' body=[\n%s]\n",AST_MODULE,TimeNowPrn(),event,hook_tmp_str);
+//if (tp == -1) return 0;
+
 	switch (tp) {
 	    case 0 ://HookResponse
 		if (console) ast_verbose("%s",hook_tmp_str);
@@ -1629,7 +1637,7 @@ unsigned char i=0;
 
 		if ((cs<0) || (cs>=MAX_CHAN_STATE)) cs = MAX_CHAN_STATE-1;
 
-		if (lg>=2) ast_verbose("[%s %s] '%s' event : chan='%s' caller='%s' exten='%s' state=%d(%s) app='%s'\n",
+		if (lg>=2) ast_verbose("[%s %s] '%s' event : chan='%s' caller='%s' exten='%s' state=%d(%s) app='%s'\n",//>=2
 				AST_MODULE, TimeNowPrn(), event, chan, caller, exten, cs, &ChanStateName[cs][0], app);
 		if (tp==1) {//Hangup
 		    if ( (strlen(chan)) && (strlen(exten)) && (strlen(caller)) ) {
@@ -1699,8 +1707,8 @@ unsigned char i;
 
     switch (cmd) {
 	case CLI_INIT:
-	    e->command = "salara show {info|conf|route}";
-	    e->usage = "Usage: salara show {info|conf|route}\n";
+	    e->command = "salara show {info|conf|route|chan_records}";
+	    e->usage = "Usage: salara show {info|conf|route|chan_records}\n";
 	    return NULL;
 	case CLI_GENERATE:
 	    return NULL;
@@ -1799,6 +1807,24 @@ unsigned char i;
 		}
 	    } else ast_cli(a->fd, "\tSalara route table is Empty\n");
 	ast_mutex_unlock(&route_lock);
+
+    } else if (!strcmp(a->argv[2],"chan_records")) {
+
+	s_chan_record *temp=NULL, *tmp=NULL;
+
+	ast_mutex_lock(&chan_lock);
+
+	    if (chan_hdr.first) {
+		ast_cli(a->fd,"adr=%p - %p total=%u\n",(void *)chan_hdr.first, (void *)chan_hdr.end, chan_hdr.counter);
+		tmp = chan_hdr.first;
+		while (tmp) {
+		    ast_cli(a->fd,"chan='%s' exten='%s' caller='%s' ast=%p update=%d\n", tmp->chan, tmp->exten, tmp->caller, tmp->ast, tmp->update);
+		    temp = tmp->next;
+		    tmp = temp;
+		}
+	    }
+
+	ast_mutex_unlock(&chan_lock);
 
     }
 
@@ -2623,8 +2649,9 @@ int act=0, lg = salara_verbose;
 		add_chan_record(buf, from, to, NULL);
 	    }
 	    sprintf(buf,"Action: Originate\nChannel: %s/%s\nContext: %s\nExten: %s\nPriority: 1\n"
-			"Callerid: %s\nTimeout: 30000\nActionID: %u\n\n",
+			"Callerid: %s\nTimeout: 10000\nActionID: %u\n\n",
 			StrUpr(Tech), from, context, to, from, act);
+//ast_verbose(buf);
 	break;
 	case 1://message send
 	    sprintf(buf,"Action: MessageSend\nActionID: %u\nTo: %s:%s\nFrom: %s\nBody: %s\n\n",
@@ -2897,7 +2924,7 @@ char *ustart=NULL, *uk_body=NULL;
 	    }
 
 	    if ((res>0) && !ok && lg) ast_verbose("%s\n", buf);
-	    else if (lg>1) ast_verbose("[%s %s] Data from rest client :\n%s\n", AST_MODULE, TimeNowPrn(), buf);
+	    else if (lg>2) ast_verbose("[%s %s] Data from rest client :\n%s\n", AST_MODULE, TimeNowPrn(), buf);
 
 	    if (done) break;
 
@@ -2912,7 +2939,7 @@ char *ustart=NULL, *uk_body=NULL;
 
 
     if (ser->fd > 0) {
-	if (lg>1) ast_verbose("[%s %s] Close client socket %d\n", AST_MODULE, TimeNowPrn(), ser->fd);
+	if (lg>2) ast_verbose("[%s %s] Close client socket %d\n", AST_MODULE, TimeNowPrn(), ser->fd);
 	shutdown(ser->fd, SHUT_RDWR);
 	close(ser->fd);
     }
@@ -3104,13 +3131,15 @@ static void *send_by_event(void *arg)
 s_event_list *rec=NULL;
 s_chan_event *evt=NULL;
 pthread_t tid = pthread_self();
-int loop=1, tp, rsa=1, cnt, ts;
+int loop=1, tp, rsa=1, cnt, ts, lg;
 
     ast_verbose("[%s %s] SEND_BY_EVENT Thread started (tid:%lu).\n", AST_MODULE, TimeNowPrn(), tid);
 
     start_http_nitka=1;
 
     while ((loop) && (!stop_http_nitka)) {
+
+	lg = salara_verbose;
 
 	usleep(1000);//10000
 
@@ -3144,6 +3173,8 @@ int loop=1, tp, rsa=1, cnt, ts;
 					tp, EventName[tp], evt->chan, evt->exten, evt->caller, ts, ChanStateName[ts], evt->app);
 		    }
 		    send_to_crm(evt);
+		} else {
+		    if (lg) ast_verbose("[%s %s] SEND_BY_EVENT Thread : record not found in del_event_list\n", AST_MODULE, TimeNowPrn());
 		}
 	    }
 	}
