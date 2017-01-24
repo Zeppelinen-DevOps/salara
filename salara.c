@@ -1392,8 +1392,8 @@ static int app_salara_exec(struct ast_channel *ast, const char *data)
 int lg;
 int ret_curl=-1, stat=-1, res_transfer;
 char *cid=NULL, *info=NULL, *buf=NULL;
-unsigned int aid=0;
-s_act_list *abc=NULL;
+//unsigned int aid=0;
+//s_act_list *abc=NULL;
 int ssl=0;
 CURLcode er;
 
@@ -1444,24 +1444,26 @@ CURLcode er;
 	memset(dest_number,0,AST_MAX_EXTENSION);
 	strcpy(dest_number, buf);
     }
-    aid = MakeAction(2, dest_number, "", "", context);
+    //aid = MakeAction(2, dest_number, "", "", context);
+    stat = ast_extension_state(NULL, context, dest_number);//(struct ast_channel *c, const char *context, const char *exten)
+    //ast_cli(a->fd, "Status=%d (%s)\n", status, ast_extension_state2str(status));
 
-    if (aid>=0) {
-	abc = find_act(aid);
-	if (abc) {
-	    stat = abc->act->status;
-	    delete_act(abc,1);
-	}
+//    if (aid>=0) {
+//	abc = find_act(aid);
+//	if (abc) {
+//	    stat = abc->act->status;
+//	    delete_act(abc,1);
+//	}
 	if (!check_stat(stat)) {
-	    if (lg>1) ast_verbose("[%s %s] Extension '%s' status (%d) OK !\n", AST_MODULE, TimeNowPrn(), dest_number, stat);
+	    if (lg>1) ast_verbose("[%s %s] Extension '%s' status (%d) OK ! (%s)\n", AST_MODULE, TimeNowPrn(), dest_number, stat, ast_extension_state2str(stat));
 	} else {
-	    if (lg) ast_verbose("[%s %s] Extension '%s' status (%d) BAD !\n", AST_MODULE, TimeNowPrn(), dest_number, stat);
+	    if (lg) ast_verbose("[%s %s] Extension '%s' status (%d) BAD ! (%s)\n", AST_MODULE, TimeNowPrn(), dest_number, stat, ast_extension_state2str(stat));
 	    memset(dest_number,0,AST_MAX_EXTENSION);
 	    strcpy(dest_number, DEF_DEST_NUMBER);
 	    check_dest(cid, dest_number);
 	    if (lg) ast_verbose("[%s %s] Route call to default dest '%s'\n", AST_MODULE, TimeNowPrn(), dest_number);
 	}
-    }
+//    }
 
 
     res_transfer = ast_transfer(ast, dest_number);
@@ -1478,7 +1480,8 @@ CURLcode er;
 		res_transfer,
 		dest_number,
 		stat,
-		&ChanStateName[stat][0]);
+		ast_extension_state2str(stat));
+		//&ChanStateName[stat][0]);
 	ast_verbose("[%s %s] application stop.\n", AST_MODULE, TimeNowPrn());
     }
 
@@ -1975,8 +1978,9 @@ char *buf=NULL;
 //----------------------------------------------------------------------
 static char *cli_salara_get_status_exten(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a)
 {
-int act;
-char *buf=NULL;
+//int act;
+//char *buf=NULL;
+int status;
 
     switch (cmd) {
 	case CLI_INIT:
@@ -1989,6 +1993,9 @@ char *buf=NULL;
 
 	    if (a->argc < 5) return CLI_SHOWUSAGE;
 
+	    status = ast_extension_state(NULL, context, a->argv[4]);//(struct ast_channel *c, const char *context, const char *exten)
+	    ast_cli(a->fd, "Status=%d (%s)\n", status, ast_extension_state2str(status));
+/*
 	    buf = (char *)calloc(1, CMD_BUF_LEN);
 	    if (buf) {
 		ast_mutex_lock(&act_lock);
@@ -2011,9 +2018,9 @@ char *buf=NULL;
 
 		s_act_list *abc = find_act(act);
 		if (abc) delete_act(abc,1);
-
+*/
 		return CLI_SUCCESS;
-	    }
+	    //}
 	break;
     }
 
@@ -2069,6 +2076,7 @@ static char *cli_salara_get_status_peer(struct ast_cli_entry *e, int cmd, struct
 {
 int act;
 char *buf=NULL;
+//char stx[256]={0};
 
     switch (cmd) {
 	case CLI_INIT:
@@ -2080,6 +2088,30 @@ char *buf=NULL;
 	case CLI_HANDLER:
 
 	    if (a->argc < 5) return CLI_SHOWUSAGE;
+	
+/*	    struct sip_peer *peer = NULL;
+//	    peer = realtime_peer(peer_name, NULL, NULL, TRUE, FINDPEERS);
+	    //peer = sip_find_peer(peer_name, NULL, TRUE, FINDPEERS, FALSE, 0);
+	    if (!peer) {
+		ast_cli(a->fd, "Peer %s not found\n", a->argv[4]);
+		return CLI_SUCCESS;
+	    }
+	    if (peer->maxms) {
+		if (peer->lastms < 0) {
+			sprintf(stx, "Unreachable");
+		} else if (peer->lastms > peer->maxms) {
+			sprintf(stx, "Lagged");
+		} else if (peer->lastms) {
+			sprintf(stx,"Reachable");
+		} else {
+			sprintf(stx,"Unknown");
+		}
+	    } else {
+		sprintf(stx,"Unmonitored");
+	    }
+	    ast_cli(a->fd, "Peer %s status %s", a->argv[4], stx);
+	    return CLI_SUCCESS;
+*/
 
 	    buf = (char *)calloc(1, CMD_BUF_LEN);
 	    if (buf) {
@@ -2651,7 +2683,6 @@ int act=0, lg = salara_verbose;
 	    sprintf(buf,"Action: Originate\nChannel: %s/%s\nContext: %s\nExten: %s\nPriority: 1\n"
 			"Callerid: %s\nTimeout: 10000\nActionID: %u\n\n",
 			StrUpr(Tech), from, context, to, from, act);
-//ast_verbose(buf);
 	break;
 	case 1://message send
 	    sprintf(buf,"Action: MessageSend\nActionID: %u\nTo: %s:%s\nFrom: %s\nBody: %s\n\n",
@@ -3165,10 +3196,10 @@ int loop=1, tp, rsa=1, cnt, ts, lg;
 		    del_event_list(rec, 0);//delete event_record from list
 		    ast_mutex_unlock(&event_lock); rsa=1;
 		    //ast_verbose("[%s %s] send_by_event thread : Unlock success !!!\n", AST_MODULE, TimeNowPrn());
-		    if (salara_verbose > 2) {
+		    if (lg>2) {//>2
 			tp = evt->type; if (tp >= MAX_EVENT_NAME) tp = MAX_EVENT_NAME-1;
 			ts = evt->state; if (ts >= MAX_CHAN_STATE) ts = MAX_CHAN_STATE-1;
-			ast_verbose("[%s %s] SEND_BY_EVENT Thread (%d):\n\t-- type(%d)='%s' chan='%s' exten='%s' caller='%s' state(%d)='%s' app='%s'\n",
+			ast_verbose("[%s %s] SEND_BY_EVENT Thread (%d): type(%d)='%s' chan='%s' exten='%s' caller='%s' state(%d)='%s' app='%s'\n",
 					AST_MODULE, TimeNowPrn(), cnt,
 					tp, EventName[tp], evt->chan, evt->exten, evt->caller, ts, ChanStateName[ts], evt->app);
 		    }
