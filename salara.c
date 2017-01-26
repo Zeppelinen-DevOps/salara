@@ -51,7 +51,8 @@
 #define AST_MODULE "salara"
 #define AST_MODULE_DESC "Features: transfer call; make call; get status: exten.,peer,channel; send: command,message,post"
 #define DEF_DEST_NUMBER "1234"
-#define SALARA_VERSION "3.1"//20.01.2017
+#define SALARA_VERSION "3.2"//26.01.2017
+//"3.1"//20.01.2017
 //"3.0"//26.12.2016
 //"2.9"//23.12.2016
 //"2.8"//22.12.2016
@@ -168,6 +169,7 @@ static char hook_tmp_str[max_buf_size]={0};
 static int reload=0;
 static int unload=0;
 static int watch_makecall = 0;
+static int timeout_makecall = 10;
 static unsigned char newchannel = 0;
 static unsigned char hangup = 0;
 static unsigned char newexten = 0;
@@ -287,6 +289,7 @@ static s_chan_record *add_chan_record(const char *nchan, const char *caller, con
 static int del_chan_record(s_chan_record *rcd, int withlock);
 static s_chan_record *update_chan(const char *nchan, const char *caller, const char *ext);
 static s_chan_record *find_chan(const char *nchan, const char *caller, const char *ext, int with_del);
+static int del_chan_by_cc(const char *nchan, const char *caller);
 static void *send_by_event(void *arg);
 //------------------------------------------------------------------------
 inline static s_chan_event *make_chan_event(int type, const char *nchan, const char *caller, const char *exten, int stat, const char *app)
@@ -563,12 +566,12 @@ char *stc=NULL, *ste=NULL, *stcaller=NULL;
 	}
 
 	if (lg>1) {//>1
-	    if (lg>2) ast_verbose("[%s %s] ADD_CHAN : first=%p end=%p counter=%d (chan='%s' ext='%s' caller='%s' ast=%p)\n",//>2
+	    if (lg>2) ast_verbose("[%s %s] ADD_CHAN : first=%p end=%p counter=%d (chan='%s' caller='%s' exten='%s' ast=%p)\n",//>2
 			AST_MODULE, TimeNowPrn(), (void *)chan_hdr.first, (void *)chan_hdr.end, chan_hdr.counter,
-			nchan, ext, caller, data);
-	    if (ret) ast_verbose("[%s %s] ADD_CHAN : rec=%p before=%p next=%p chan='%s' ext='%s' caller='%s' ast=%p\n",
+			nchan, caller, ext, data);
+	    if (ret) ast_verbose("[%s %s] ADD_CHAN : rec=%p before=%p next=%p chan='%s' caller='%s' exten='%s' ast=%p\n",
 			AST_MODULE, TimeNowPrn(), (void *)ret, (void *)ret->before, (void *)ret->next,
-			ret->chan, ret->exten, ret->caller, ret->ast);
+			ret->chan, ret->caller, ret->exten, ret->ast);
 	}
 
     ast_mutex_unlock(&chan_lock);
@@ -644,7 +647,7 @@ char *nc=NULL;
 	    tmp = chan_hdr.first;
 	    while (tmp) {
 		if (!tmp->update) {
-		    if ( (strcmp(tmp->chan, nchan)) && (!strcmp(tmp->exten, ext)) && (!strcmp(tmp->caller, caller)) ) {
+		    if ( /*(strcmp(tmp->chan, nchan)) &&*/ (!strcmp(tmp->exten, ext)) && (!strcmp(tmp->caller, caller)) ) {
 			nc = (char *)calloc(1, strlen(nchan) + 1);
 			if (nc) {
 			    if (tmp->chan) free(tmp->chan);// tmp->chan=NULL;
@@ -663,16 +666,16 @@ char *nc=NULL;
 
 	if (lg>1) {//>1
 	    if (ret)
-		ast_verbose("[%s %s] UPDATE_CHAN : first=%p end=%p counter=%d chan='%s' exten='%s' caller='%s' ast=%p, record found %p\n",
+		ast_verbose("[%s %s] UPDATE_CHAN : first=%p end=%p counter=%d chan='%s' caller='%s' exten='%s' ast=%p, record found %p\n",
 				AST_MODULE, TimeNowPrn(),
 				(void *)chan_hdr.first, (void *)chan_hdr.end, chan_hdr.counter,
-				nchan, ext, caller, ret->ast,
+				nchan, caller, ext, ret->ast,
 				(void *)ret);
 	    else
-		if (lg>2) ast_verbose("[%s %s] UPDATE_CHAN : first=%p end=%p counter=%d chan='%s' exten='%s' caller='%s', no valid record found\n",
+		if (lg>2) ast_verbose("[%s %s] UPDATE_CHAN : first=%p end=%p counter=%d chan='%s' caller='%s' exten='%s', no valid record\n",
 				AST_MODULE, TimeNowPrn(),
 				(void *)chan_hdr.first, (void *)chan_hdr.end, chan_hdr.counter,
-				nchan, ext, caller);
+				nchan, caller, ext);
 	}
 
     ast_mutex_unlock(&chan_lock);
@@ -705,43 +708,54 @@ s_chan_record *ret=NULL, *temp=NULL, *tmp=NULL;
 	}
 
 	if (ret) {
-	    if (lg>1) ast_verbose("[%s %s] FIND_CHAN : first=%p end=%p counter=%d chan='%s' exten='%s' caller='%s' ast=%p, record found %p (with_del=%d)\n",
+	    if (lg>1) ast_verbose("[%s %s] FIND_CHAN : first=%p end=%p counter=%d chan='%s' caller='%s' exten='%s' ast=%p, record found %p (with_del=%d)\n",
 			AST_MODULE, TimeNowPrn(),
 			(void *)chan_hdr.first, (void *)chan_hdr.end, chan_hdr.counter,
-			nchan, ext, caller, ret->ast,
+			nchan, caller, ext, ret->ast,
 			(void *)ret,
 			with_del);
 	    if (with_del) del_chan_record(ret, 0);
 	} else {
-	    if (lg>2) ast_verbose("[%s %s] FIND_CHAN : first=%p end=%p counter=%d chan='%s' exten='%s' caller='%s', record not found (with_del=%d)\n",
+	    if (lg>2) ast_verbose("[%s %s] FIND_CHAN : first=%p end=%p counter=%d chan='%s' caller='%s' exten='%s', record not found (with_del=%d)\n",
 			AST_MODULE, TimeNowPrn(),
 			(void *)chan_hdr.first, (void *)chan_hdr.end, chan_hdr.counter,
-			nchan, ext, caller, with_del);
+			nchan, caller, ext, with_del);
 	}
-/*
-	if (ret) {
-	    if (ret->ast) {
-		if (lg>2) ast_verbose("[%s %s] FIND_CHAN : chan=[%s] exten=[%s] caller=[%s] ast=%p (with_del=%d)\n",
-			AST_MODULE,
-			TimeNowPrn(),
-			nchan,
-			ext,
-			caller,
-			(void *)ret->ast,
-			with_del);
-	    } else {
-		if (lg>2) ast_verbose("[%s %s] FIND_CHAN : record found at %p, but ast=NULL -> delete record ! (with_del=%d)\n",
-			AST_MODULE, TimeNowPrn(), (void *)ret, with_del);
-	    }
-	    //if (with_del) del_chan_record(ret, 0);
-	}
-*/
 
     ast_mutex_unlock(&chan_lock);
 
     return ret;
 }
 //------------------------------------------------------------------------
+static int del_chan_by_cc(const char *nchan, const char *caller)
+{
+int cnt=0;
+s_chan_record *ret=NULL, *temp=NULL, *tmp=NULL;
+
+    if ((!nchan) || (!caller)) return cnt;
+
+    if ( (!strlen(nchan)) || (!strlen(caller)) ) return cnt;
+
+    ast_mutex_lock(&chan_lock);
+
+	if (chan_hdr.first) {
+	    tmp = chan_hdr.first;
+	    while (tmp) {
+		if ( (!strcmp(tmp->chan, nchan)) && (!strcmp(tmp->caller, caller)) ) {
+		    ret = tmp;
+		    del_chan_record(ret, 0); cnt++;
+		    tmp = chan_hdr.first;
+		} else {
+		    temp = tmp->next;
+		    tmp = temp;
+		}
+	    }
+	}
+
+    ast_mutex_unlock(&chan_lock);
+
+    return cnt;
+}
 //------------------------------------------------------------------------
 //------------------------------------------------------------------------
 static int delete_act(s_act_list *arcd, int withlock)
@@ -1273,6 +1287,7 @@ static struct manager_custom_hook hook = {
 static char *cli_salara_info(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a);
 static char *cli_salara_set_verbose(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a);
 static char *cli_salara_set_route(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a);
+static char *cli_salara_del_chan_record(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a);
 static char *cli_salara_send_cmd(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a);
 static char *cli_salara_get_status_exten(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a);
 static char *cli_salara_get_status_chan(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a);
@@ -1284,6 +1299,7 @@ static struct ast_cli_entry cli_salara[] = {
     AST_CLI_DEFINE(cli_salara_info, "Show Salara module information/configuration/route/chan_records"),
     AST_CLI_DEFINE(cli_salara_set_verbose, "Off/On/Debug/Dump verbose level"),
     AST_CLI_DEFINE(cli_salara_set_route, "Add caller:called to route table"),
+    AST_CLI_DEFINE(cli_salara_del_chan_record, "Remove record (by <chan caller>) from chan_record_list"),
     AST_CLI_DEFINE(cli_salara_send_cmd, "Send AMI Command"),
     AST_CLI_DEFINE(cli_salara_get_status_exten, "Get extension status"),
     AST_CLI_DEFINE(cli_salara_get_status_chan, "Get channel status"),
@@ -1344,7 +1360,7 @@ json_t *obj=NULL, *tobj=NULL;
     return ret;
 }
 //----------------------------------------------------------------------
-static int send_curl(char *url, int wait, char *str, CURLcode *err, int crt)
+static int send_curl(char *url, int wait, char *str, CURLcode *err, int crt, int js)
 {
 int ret=-1, lg = salara_verbose;
 CURL *curl;
@@ -1357,8 +1373,14 @@ struct MemoryStruct chunk;
     curl = curl_easy_init();
     if (curl) {
 	struct curl_slist *headers=NULL;
-	headers = curl_slist_append(headers, "Content-Type: application/x-www-form-urlencoded");
+	if (js) headers = curl_slist_append(headers, "Content-Type: application/json");
+	   else headers = curl_slist_append(headers, "Content-Type: application/x-www-form-urlencoded");
 	curl_easy_setopt(curl, CURLOPT_URL, url);
+	if (js) {//POST with json
+	    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, strlen(str));
+	    curl_easy_setopt(curl, CURLOPT_COPYPOSTFIELDS, str);
+	    //curl_easy_setopt(curl, CURLOPT_POSTFIELDS, str);
+	}
 	//if (body) curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
 	if (crt) {//disable certificates
 	    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0);
@@ -1372,6 +1394,7 @@ struct MemoryStruct chunk;
 	res = curl_easy_perform(curl);
 	*err = res;
 	if (res == CURLE_OK) {
+	    *str = '\0';
 	    ret = CheckCurlAnswer((char *)chunk.memory, str);
 	    if (lg>1)
 		ast_verbose("[%s %s] Curl answer :%.*s\n", AST_MODULE, TimeNowPrn(), chunk.size, (char *)chunk.memory);
@@ -1394,7 +1417,7 @@ int ret_curl=-1, stat=-1, res_transfer;
 char *cid=NULL, *info=NULL, *buf=NULL;
 //unsigned int aid=0;
 //s_act_list *abc=NULL;
-int ssl=0;
+int ssl=0, js=0;
 CURLcode er;
 
 
@@ -1418,13 +1441,21 @@ CURLcode er;
     //----------------   send Curl   -------------------------------------
     info = (char *)calloc(1, strlen(dest_url) + strlen(cid) + 1);
     if (info) {
-	sprintf(info,"%s%s", dest_url, cid);
 	if (strstr(dest_url,"https")) ssl=1;
-	ret_curl = send_curl(info, SALARA_CURLOPT_TIMEOUT, buf, &er, ssl);
+	sprintf(info,"%s", dest_url);
+	if (strstr(dest_url,"?phone=")) {
+	    sprintf(info+strlen(info),"%s", cid);
+	    if (lg) ast_verbose("[%s %s] Send_request_to '%s'\n", AST_MODULE, TimeNowPrn(), info);
+	} else {
+	    js++;
+	    sprintf(buf,"{\"phone\":\"%s\"}",cid);
+	    if (lg) ast_verbose("[%s %s] Send_request_to '%s' body='%s'\n", AST_MODULE, TimeNowPrn(), info, buf);
+	}
+	ret_curl = send_curl(info, SALARA_CURLOPT_TIMEOUT, buf, &er, ssl, js);
 	if (er != CURLE_OK) {
 	    ret_curl = 1;
-	    if (lg) ast_verbose("[%s %s] Send_request_to '%s'\n\t--buf=[%s] err='%s'\n", AST_MODULE, TimeNowPrn(), info, buf, curl_easy_strerror(er));
-	} else if (lg) ast_verbose("[%s %s] Send_request_to '%s'\n", AST_MODULE, TimeNowPrn(), info);
+	    if (lg) ast_verbose("[%s %s]\t--buf=[%s] err='%s'\n", AST_MODULE, TimeNowPrn(), buf, curl_easy_strerror(er));
+	}
 	free(info);
     } else {
 	ast_verbose("[%s %s] Error: calloc memory\n", AST_MODULE, TimeNowPrn());
@@ -1669,7 +1700,9 @@ unsigned char i=0;
 		    }
 		} else if (tp==3) {//Newexten
 		    if ( (strlen(chan)) && (strlen(exten)) && (strlen(caller)) ) {
-			if (cs==6) update_chan(chan, caller, exten);
+			if (watch_makecall) {
+			    if (cs==6) update_chan(chan, caller, exten);
+			}
 			switch (newexten) {
 			    case 1://used for transfer call with status UP
 				if (cs==6) {//when state=UP
@@ -1749,6 +1782,7 @@ unsigned char i;
 	    case 3 : ast_cli(a->fd, "(dump)\n"); break;
 		default: ast_cli(a->fd, "(unknown)\n");
 	}
+	ast_cli(a->fd, "\t-- timeout makecall: %d\n", timeout_makecall);
 	ast_cli(a->fd, "\t-- watch makecall: %d\n", watch_makecall);
 	ast_cli(a->fd, "\t-- Hangup event: %d", hangup);
 	switch (hangup) {
@@ -1918,6 +1952,48 @@ char called[AST_MAX_EXTENSION];
 
     return CLI_SUCCESS;
 }
+//------------------------------------------------------------------------------
+static char *cli_salara_del_chan_record(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a)
+{
+int cr=0, cd=0;
+char chan[AST_MAX_EXTENSION];
+char caller[AST_MAX_EXTENSION];
+
+    switch (cmd) {
+	case CLI_INIT:
+	    e->command = "salara del chan_record";
+	    e->usage = "Usage: salara del chan_record <chan caller>\n";
+	    return NULL;
+	case CLI_GENERATE:
+	    return NULL;
+	case CLI_HANDLER:
+	    break;
+	default:
+	    ast_cli(a->fd, "unknown CLI command = %d\n", cmd);
+	    return CLI_FAILURE;
+    }
+
+    if (a->argc < 5) return CLI_SHOWUSAGE;
+
+
+    if (strlen(a->argv[3])>0) {
+	memset(chan,0,AST_MAX_EXTENSION);
+	strcpy(chan, a->argv[3]);
+	cr = 1;
+    }
+    if (strlen(a->argv[4])>0) {
+	memset(caller,0,AST_MAX_EXTENSION);
+	strcpy(caller, a->argv[4]);
+	cd = 1;
+    }
+
+    if ((!cd) || (!cr)) return CLI_SHOWUSAGE;
+
+    ast_cli(a->fd, "\tSalara: delele %d records from chan_record_list\n", del_chan_by_cc(chan, caller));
+
+    return CLI_SUCCESS;
+}
+
 //------------------------------------------------------------------------------
 static int msg_send(char *cmd_line)
 {
@@ -2281,7 +2357,7 @@ FILE *fp=NULL;
 char buf[PATH_MAX];
 char caller[AST_MAX_EXTENSION];
 char called[AST_MAX_EXTENSION];
-int len = -1, dl, verb, i, w_mc=-1;
+int len = -1, dl, verb, i, w_mc=-1, t_mc=-1;
 bool begin=false, end=false;
 char *_begin=NULL, *uk=NULL, *uki=NULL, *uks=NULL;
 
@@ -2477,6 +2553,14 @@ char *_begin=NULL, *uk=NULL, *uki=NULL, *uks=NULL;
 												    uks = strchr(buf,'\n'); if (uks) *uks = '\0';
 												    uki += 15;
 												    w_mc = atoi(uki);
+												} else {
+												    uki = strstr(buf,"timeout_makecall=");
+												    if (uki) {
+													//ast_verbose("\tread_config: watch_makecall:%s\n",buf);
+													uks = strchr(buf,'\n'); if (uks) *uks = '\0';
+													uki += 17;
+													t_mc = atoi(uki);
+												    }
 												}
 											    }
 											}
@@ -2512,6 +2596,7 @@ char *_begin=NULL, *uk=NULL, *uki=NULL, *uks=NULL;
     if (!strlen(rest_server)) strcpy(rest_server, DEFAULT_SRV_ADDR);
 
     if (w_mc != -1) watch_makecall = w_mc;
+    if (t_mc != -1) timeout_makecall = t_mc;
 
     return len;
 }
@@ -2571,6 +2656,7 @@ s_route_record *rt=NULL, *nx=NULL;
 
     len += fprintf(fp, "[event]\n");
     len += fprintf(fp, "verbose=%d\n", salara_verbose);
+    len += fprintf(fp, "timeout_makecall=%d\n", timeout_makecall);
     len += fprintf(fp, "watch_makecall=%d\n", watch_makecall);
     len += fprintf(fp, "hangup=%d\n", hangup);
     len += fprintf(fp, "newchannel=%d\n", newchannel);
@@ -2588,6 +2674,7 @@ s_route_record *rt=NULL, *nx=NULL;
     if (!strlen(rest_server)) strcpy(rest_server, DEFAULT_SRV_ADDR);
     len += fprintf(fp, "rest_server=%s\n", rest_server);
     len += fprintf(fp, "dest_url=%s\n", dest_url);
+    len += fprintf(fp, ";dest_url=https://Alarm:3000/call_center/incoming_call/check_is_org_only?phone=\n");
     len += fprintf(fp, "dest_url_event=%s\n", dest_url_event);
     len += fprintf(fp, "good_status=0,4\n");
     len += fprintf(fp, FORMAT_SEPARATOR_LINE);
@@ -2681,8 +2768,8 @@ int act=0, lg = salara_verbose;
 		add_chan_record(buf, from, to, NULL);
 	    }
 	    sprintf(buf,"Action: Originate\nChannel: %s/%s\nContext: %s\nExten: %s\nPriority: 1\n"
-			"Callerid: %s\nTimeout: 10000\nActionID: %u\n\n",
-			StrUpr(Tech), from, context, to, from, act);
+			"Callerid: %s\nTimeout: %d\nActionID: %u\n\n",
+			StrUpr(Tech), from, context, to, from, timeout_makecall*1000, act);
 	break;
 	case 1://message send
 	    sprintf(buf,"Action: MessageSend\nActionID: %u\nTo: %s:%s\nFrom: %s\nBody: %s\n\n",
@@ -3131,7 +3218,7 @@ char buf[MAX_ANSWER_LEN]={0};
     tp = evt->type; if (tp >= MAX_EVENT_NAME) tp = MAX_EVENT_NAME-1;
     ts = evt->state; if (ts >= MAX_CHAN_STATE) ts = MAX_CHAN_STATE-1;
     //json_object_set_new(js,"type", json_integer((json_int_t)tp));
-    json_object_set_new(js,"name", json_string(EventName[tp]));
+    json_object_set_new(js,"event", json_string(EventName[tp]));
     if (evt->chan) json_object_set_new(js,"chan", json_string(evt->chan));
     if (evt->caller) json_object_set_new(js,"caller", json_string(evt->caller));
     if (evt->exten) json_object_set_new(js,"exten", json_string(evt->exten));
