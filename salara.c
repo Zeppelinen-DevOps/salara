@@ -222,7 +222,7 @@ static unsigned int srv_time_cnt=0;
 
 static char Tech[] = "sip";
 
-static char *ActType[MAX_ACT_TYPE] = {"Make call","Send message","Get status exten", "Get status peer", "Get status channel", "Unknown"};
+static char *ActType[MAX_ACT_TYPE] = {"Make call","Send message", "Get status peer", "Get status channel", "Get status exten", "Unknown"};
 
 static const char *S_ActionID = "ActionID:";
 static const char *S_Status = "\nStatus:";
@@ -2665,7 +2665,7 @@ static int MakeAction(int type, char *from, char *to, char *mess, char *ctext)
 char buf[512]={0};
 int act=0, lg = salara_verbose;
 
-    if ((type < 0) || (type > MAX_EVENT_TYPE)) return 0;
+    if ((type < 0) || (type >= MAX_EVENT_TYPE)) return 0;
 
     ast_mutex_lock(&act_lock);
 	Act_ID++;
@@ -2692,15 +2692,10 @@ int act=0, lg = salara_verbose;
 		to,//FROM
 		mess);
 	break;
-	case 2://exten. status
-	    sprintf(buf,"Action: ExtensionState\nActionID: %u\nExten: %s\nContext: ", act, from);
-	    if (strlen(ctext)) sprintf(buf+strlen(buf),"%s\n\n", ctext);
-			  else sprintf(buf+strlen(buf),"%s\n\n", context);
-	break;
-	case 3://peer status
+	case 2://peer status
 	    sprintf(buf,"Action: SIPpeerstatus\nActionID: %u\nPeer: %s\n\n", act, from);
 	break;
-	case 4://channel status
+	case 3://channel status
 	    /*
 	    Action: Status
 	    Channel: SIP/8003-00000001
@@ -2709,6 +2704,13 @@ int act=0, lg = salara_verbose;
 	    //sprintf(buf,"Action: Status\nChannel: %s\nActionID: %u\n\n", from, act);
 	    sprintf(buf,"Action: Command\nCommand: core show channel %s\nActionID: %u\n\n",from,act);
 	break;
+/*
+	case 4://exten. status
+	    sprintf(buf,"Action: ExtensionState\nActionID: %u\nExten: %s\nContext: ", act, from);
+	    if (strlen(ctext)) sprintf(buf+strlen(buf),"%s\n\n", ctext);
+			  else sprintf(buf+strlen(buf),"%s\n\n", context);
+	break;
+*/
     }
 
     if (lg>2) {
@@ -2716,7 +2718,7 @@ int act=0, lg = salara_verbose;
 	ast_verbose(buf);
 	console=1;
     }
-    msg_send(buf);
+    if (strlen(buf)) msg_send(buf);
     console=0;
 
     return act;
@@ -2731,7 +2733,8 @@ unsigned int ret=0, aid;
 char *buf=NULL;
 int uk=0, loop=1, tmp=0, done=0, stat=-1, i=0, req_type=-1, rtype;
 char *uki=NULL, *uks=NULL, *uke=NULL;
-const char *answer_bad = "{\"result\":-2,\"text\":\"Error\"}";
+//const char *answer_bad = "{\"result\":-2,\"text\":\"Error\"}";
+const char *answer_bad = "Error";
 const char *names[max_param] = {"operator=", "phone=", "msg="};
 const char *post_len = "Content-Length:";
 char operator[AST_MAX_EXTENSION]={0}, phone[AST_MAX_EXTENSION]={0}, msg[AST_MAX_EXTENSION]={0}, cont[AST_MAX_EXTENSION]={0};
@@ -2842,7 +2845,7 @@ char *ustart=NULL, *uk_body=NULL;
 					    if (json_is_integer(tobj)) sprintf(operator,"%lld", json_integer_value(tobj));
 					    else er=1;
 					    if (!er) {
-						req_type = 2;//get status exten
+						req_type = 4;//get status exten
 					    } else {
 						er=0;
 						json_t *tobj = json_object_get(obj, &names_rest[4][0]);//"peer"
@@ -2851,13 +2854,13 @@ char *ustart=NULL, *uk_body=NULL;
 						if (json_is_integer(tobj)) sprintf(operator,"%lld", json_integer_value(tobj));
 						else er=1;
 						if (!er) {
-						    req_type = 3;//get status peer
+						    req_type = 2;//get status peer
 						} else {
 						    er=0;
 						    json_t *tobj = json_object_get(obj, &names_rest[5][0]);//"channel"
 						    if (json_is_string(tobj)) {
 							sprintf(operator,"%s", json_string_value(tobj));
-							req_type = 4;//get status channel
+							req_type = 3;//get status channel
 						    } else er=1;
 						}
 					    }
@@ -2914,43 +2917,43 @@ char *ustart=NULL, *uk_body=NULL;
 		}
 		//------------------------------------------------------
 		two=0;
-		if (req_type>2) aid = MakeAction(req_type,operator,phone,msg,cont);//get status exten.,peer,channel
-			   else aid = MakeAction(2,operator,phone,msg,cont);//get status exten. (operator)
-		usleep(2000);
 		memset(ack_text,0,SIZE_OF_RESP);
-		if (aid>0) {
-		    s_act_list *abc = find_act(aid);
-		    if (abc) {
-			stat = abc->act->status;
-			strcpy(ack_text, abc->act->resp);
-			delete_act(abc,1);
-		    }
-		    if (!check_stat(stat)) two++;
-		    if (lg>1) ast_verbose("[%s %s] Dest '%s' status (%d)\n", AST_MODULE, TimeNowPrn(), operator, stat);
-		    if (req_type >= 2) {//get status:exten peer chan
-			two=0;
+		//"Make call","Send message", "Get status peer", "Get status channel", "Get status exten", "Unknown"
+		switch (req_type) {
+		    case 0://"Make call"
+		    case 1://"Send message"
+		    case 4://"Get status exten"
+			stat = ast_extension_state(NULL, cont, operator);
+			strcpy(ack_text, ast_extension_state2str(stat));
+			if (req_type==4) done=1;
+			else {
+			    if (!check_stat(stat)) two++;
+			    if (lg>1) ast_verbose("[%s %s] Dest '%s' status (%d)\n", AST_MODULE, TimeNowPrn(), operator, stat);
+			}
+		    break;
+		    case 2://"Get status peer"
+		    case 3://"Get status channel"
+			aid = MakeAction(req_type,operator,phone,msg,cont);//get status peer, channel
+			usleep(2000);
+			if (aid>0) {
+			    s_act_list *abc = find_act(aid);
+			    if (abc) {
+				stat = abc->act->status;
+				strcpy(ack_text, abc->act->resp);
+				delete_act(abc,1);
+			    }
+			} else {
+			    sprintf(ack_text,"%s", answer_bad);
+			}
 			done=1;
-			sprintf(ack_status,"{\"result\":%d,\"text\":\"%s\"}", stat, ack_text);
-
-			write(ser->fd, ack_status, strlen(ack_status));
-
-			if (lg) ast_verbose("[%s %s] Send answer '%s' to rest client\n", AST_MODULE, TimeNowPrn(), ack_status);
-			break;
-		    } else {
-			sprintf(ack_status,"{\"result\":%d,\"text\":\"%s\"}", stat, ack_text);
-
-			write(ser->fd, ack_status, strlen(ack_status));
-
-			if (lg) ast_verbose("[%s %s] Send answer '%s' to rest client\n", AST_MODULE, TimeNowPrn(), ack_status);
-		    }
-		} else {
-		    write(ser->fd, answer_bad, strlen(answer_bad));
-
-		    if (lg) ast_verbose("[%s %s] Send answer '%s' to rest client\n", AST_MODULE, TimeNowPrn(), answer_bad);
-		}
+		    break;
+			default : { sprintf(ack_text,"%s", answer_bad); stat=-2; }
+		}//switch(req_type)
+		sprintf(ack_status,"{\"result\":%d,\"text\":\"%s\"}", stat, ack_text);
+		write(ser->fd, ack_status, strlen(ack_status));
+		if (lg) ast_verbose("[%s %s] Send answer '%s' to rest client\n", AST_MODULE, TimeNowPrn(), ack_status);
 	    } else {
 		write(ser->fd, answer_bad, strlen(answer_bad));
-
 		if (lg) ast_verbose("[%s %s] Error request parser\n", AST_MODULE, TimeNowPrn());
 	    }
 
