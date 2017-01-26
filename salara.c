@@ -51,7 +51,7 @@
 #define AST_MODULE "salara"
 #define AST_MODULE_DESC "Features: transfer call; make call; get status: exten.,peer,channel; send: command,message,post"
 #define DEF_DEST_NUMBER "1234"
-#define SALARA_VERSION "3.2"//26.01.2017
+#define SALARA_VERSION "3.3"//26.01.2017
 //"3.1"//20.01.2017
 //"3.0"//26.12.2016
 //"2.9"//23.12.2016
