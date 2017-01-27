@@ -258,15 +258,13 @@ static const char *ChanStateName[MAX_CHAN_STATE] = {
 static const char *EventName[MAX_EVENT_NAME] = {
 "HookResponse", "Hangup", "Newchannel", "Newexten", "AgentConnect"};
 
-AST_MUTEX_DEFINE_STATIC(salara_lock);//global mutex
+static const char * const global_useragent = "libcurl-agent/1.0";
 
-AST_MUTEX_DEFINE_STATIC(resp_event_lock);//event_list mutex
+AST_MUTEX_DEFINE_STATIC(salara_lock);//global mutex
 
 AST_MUTEX_DEFINE_STATIC(route_lock);//route_table mutex
 
 AST_MUTEX_DEFINE_STATIC(act_lock);//actionID mutex
-
-AST_MUTEX_DEFINE_STATIC(status_lock);//actionID mutex
 
 AST_MUTEX_DEFINE_STATIC(chan_lock);//chan_list mutex
 
@@ -624,7 +622,6 @@ s_chan_record *bf=NULL, *nx=NULL;
 			(void *)chan_hdr.first,
 			(void *)chan_hdr.end,
 			chan_hdr.counter);
-	//}
 
     if (withlock) ast_mutex_unlock(&chan_lock);
 
@@ -650,7 +647,7 @@ char *nc=NULL;
 		    if ( /*(strcmp(tmp->chan, nchan)) &&*/ (!strcmp(tmp->exten, ext)) && (!strcmp(tmp->caller, caller)) ) {
 			nc = (char *)calloc(1, strlen(nchan) + 1);
 			if (nc) {
-			    if (tmp->chan) free(tmp->chan);// tmp->chan=NULL;
+			    if (tmp->chan) free(tmp->chan);
 			    strcat(nc, nchan);
 			    tmp->chan = nc;
 			    tmp->update = 1;
@@ -685,7 +682,7 @@ char *nc=NULL;
 //------------------------------------------------------------------------
 static s_chan_record *find_chan(const char *nchan, const char *caller, const char *ext, int with_del)
 {
-int lg;//, stat;
+int lg;
 s_chan_record *ret=NULL, *temp=NULL, *tmp=NULL;
 
     if (!ext) return ret;
@@ -756,6 +753,7 @@ s_chan_record *ret=NULL, *temp=NULL, *tmp=NULL;
 
     return cnt;
 }
+//------------------------------------------------------------------------
 //------------------------------------------------------------------------
 //------------------------------------------------------------------------
 static int delete_act(s_act_list *arcd, int withlock)
@@ -1196,9 +1194,7 @@ static void remove_records()
 {
     ast_mutex_lock(&route_lock);
 
-	while (route_hdr.first) {
-	    del_record(route_hdr.first, 0);
-	}
+	while (route_hdr.first) del_record(route_hdr.first, 0);
 
     ast_mutex_unlock(&route_lock);
 }
@@ -1261,28 +1257,12 @@ static int check_dest(char *from, char *to);
 static int MakeAction(int type, char *from, char *to, char *mess, char *ctext);
 static int send_to_crm(s_chan_event *evt);
 static int send_curl_event(char *url, char *body, int wait, char *str, int str_len, CURLcode *err, int crt, int ctype, int prn);
-//----------------------------------------------------------------------
-//----------------------------------------------------------------------
-//----------------------------------------------------------------------
-//----------------------------------------------------------------------
-
-static const char * const global_useragent = "libcurl-agent/1.0";
-
-//----------------------------------------------------------------------
-//----------------------------------------------------------------------
-//----------------------------------------------------------------------
-//----------------------------------------------------------------------
-
 static int hook_callback(int category, const char *event, char *body);
-
+//----------------------------------------------------------------------
 static struct manager_custom_hook hook = {
     .file = __FILE__,
     .helper = &hook_callback,
 };
-
-//----------------------------------------------------------------------
-//----------------------------------------------------------------------
-//----------------------------------------------------------------------
 //----------------------------------------------------------------------
 static char *cli_salara_info(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a);
 static char *cli_salara_set_verbose(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a);
@@ -1307,7 +1287,9 @@ static struct ast_cli_entry cli_salara[] = {
     AST_CLI_DEFINE(cli_salara_send_msg, "Send AMI Message"),
     AST_CLI_DEFINE(cli_salara_send_post, "Send POST request to http server"),
 };
-//----------------------------------------------------------------------
+//*******************************************************************************************************
+//*******************************************************************************************************
+//*******************************************************************************************************
 static size_t WrMemCallBackFunc(void *contents, size_t size, size_t nmemb, void *userp)
 {
 size_t realsize = size *nmemb;
@@ -1381,7 +1363,6 @@ struct MemoryStruct chunk;
 	    curl_easy_setopt(curl, CURLOPT_COPYPOSTFIELDS, str);
 	    //curl_easy_setopt(curl, CURLOPT_POSTFIELDS, str);
 	}
-	//if (body) curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
 	if (crt) {//disable certificates
 	    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0);
 	    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0);
@@ -1415,8 +1396,6 @@ static int app_salara_exec(struct ast_channel *ast, const char *data)
 int lg;
 int ret_curl=-1, stat=-1, res_transfer;
 char *cid=NULL, *info=NULL, *buf=NULL;
-//unsigned int aid=0;
-//s_act_list *abc=NULL;
 int ssl=0, js=0;
 CURLcode er;
 
@@ -1475,32 +1454,23 @@ CURLcode er;
 	memset(dest_number,0,AST_MAX_EXTENSION);
 	strcpy(dest_number, buf);
     }
-    //aid = MakeAction(2, dest_number, "", "", context);
-    stat = ast_extension_state(NULL, context, dest_number);//(struct ast_channel *c, const char *context, const char *exten)
-    //ast_cli(a->fd, "Status=%d (%s)\n", status, ast_extension_state2str(status));
 
-//    if (aid>=0) {
-//	abc = find_act(aid);
-//	if (abc) {
-//	    stat = abc->act->status;
-//	    delete_act(abc,1);
-//	}
-	if (!check_stat(stat)) {
-	    if (lg>1) ast_verbose("[%s %s] Extension '%s' status (%d) OK ! (%s)\n", AST_MODULE, TimeNowPrn(), dest_number, stat, ast_extension_state2str(stat));
-	} else {
-	    if (lg) ast_verbose("[%s %s] Extension '%s' status (%d) BAD ! (%s)\n", AST_MODULE, TimeNowPrn(), dest_number, stat, ast_extension_state2str(stat));
-	    memset(dest_number,0,AST_MAX_EXTENSION);
-	    strcpy(dest_number, DEF_DEST_NUMBER);
-	    check_dest(cid, dest_number);
-	    if (lg) ast_verbose("[%s %s] Route call to default dest '%s'\n", AST_MODULE, TimeNowPrn(), dest_number);
-	}
-//    }
+    stat = ast_extension_state(NULL, context, dest_number);//(struct ast_channel *c, const char *context, const char *exten)
+
+    if (!check_stat(stat)) {
+	if (lg>1) ast_verbose("[%s %s] Extension '%s' status (%d) OK ! (%s)\n", AST_MODULE, TimeNowPrn(), dest_number, stat, ast_extension_state2str(stat));
+    } else {
+	if (lg) ast_verbose("[%s %s] Extension '%s' status (%d) BAD ! (%s)\n", AST_MODULE, TimeNowPrn(), dest_number, stat, ast_extension_state2str(stat));
+	memset(dest_number,0,AST_MAX_EXTENSION);
+	strcpy(dest_number, DEF_DEST_NUMBER);
+	check_dest(cid, dest_number);
+	if (lg) ast_verbose("[%s %s] Route call to default dest '%s'\n", AST_MODULE, TimeNowPrn(), dest_number);
+    }
 
 
     res_transfer = ast_transfer(ast, dest_number);
 
     if (res_transfer>0) add_chan_record(ast_channel_name(ast), cid, dest_number, (void *)ast);
-
 
     if (lg) {
 	stat = ast_channel_state(ast); if (stat > MAX_CHAN_STATE-1) stat=MAX_CHAN_STATE-1;
@@ -1512,7 +1482,6 @@ CURLcode er;
 		dest_number,
 		stat,
 		ast_extension_state2str(stat));
-		//&ChanStateName[stat][0]);
 	ast_verbose("[%s %s] application stop.\n", AST_MODULE, TimeNowPrn());
     }
 
@@ -1993,7 +1962,6 @@ char caller[AST_MAX_EXTENSION];
 
     return CLI_SUCCESS;
 }
-
 //------------------------------------------------------------------------------
 static int msg_send(char *cmd_line)
 {
@@ -2050,12 +2018,9 @@ char *buf=NULL;
 
     return CLI_FAILURE;
 }
-
 //----------------------------------------------------------------------
 static char *cli_salara_get_status_exten(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a)
 {
-//int act;
-//char *buf=NULL;
 int status;
 
     switch (cmd) {
@@ -2071,33 +2036,8 @@ int status;
 
 	    status = ast_extension_state(NULL, context, a->argv[4]);//(struct ast_channel *c, const char *context, const char *exten)
 	    ast_cli(a->fd, "Status=%d (%s)\n", status, ast_extension_state2str(status));
-/*
-	    buf = (char *)calloc(1, CMD_BUF_LEN);
-	    if (buf) {
-		ast_mutex_lock(&act_lock);
-		    Act_ID++;
-		    act = Act_ID;
-		ast_mutex_unlock(&act_lock);
 
-		add_act(act);
-
-		sprintf(buf,"Action: ExtensionState\nActionID: %u\nExten: %s\nContext: %s\n\n",
-			    act,
-			    a->argv[4],
-			    context);
-		ast_cli(a->fd, "%s", buf);
-		console=1;
-		msg_send(buf);
-		free(buf);
-		console=0;
-		usleep(1000);
-
-		s_act_list *abc = find_act(act);
-		if (abc) delete_act(abc,1);
-*/
-		return CLI_SUCCESS;
-	    //}
-	break;
+	    return CLI_SUCCESS;
     }
 
     return CLI_FAILURE;
@@ -2152,7 +2092,6 @@ static char *cli_salara_get_status_peer(struct ast_cli_entry *e, int cmd, struct
 {
 int act;
 char *buf=NULL;
-//char stx[256]={0};
 
     switch (cmd) {
 	case CLI_INIT:
@@ -2164,30 +2103,6 @@ char *buf=NULL;
 	case CLI_HANDLER:
 
 	    if (a->argc < 5) return CLI_SHOWUSAGE;
-	
-/*	    struct sip_peer *peer = NULL;
-//	    peer = realtime_peer(peer_name, NULL, NULL, TRUE, FINDPEERS);
-	    //peer = sip_find_peer(peer_name, NULL, TRUE, FINDPEERS, FALSE, 0);
-	    if (!peer) {
-		ast_cli(a->fd, "Peer %s not found\n", a->argv[4]);
-		return CLI_SUCCESS;
-	    }
-	    if (peer->maxms) {
-		if (peer->lastms < 0) {
-			sprintf(stx, "Unreachable");
-		} else if (peer->lastms > peer->maxms) {
-			sprintf(stx, "Lagged");
-		} else if (peer->lastms) {
-			sprintf(stx,"Reachable");
-		} else {
-			sprintf(stx,"Unknown");
-		}
-	    } else {
-		sprintf(stx,"Unmonitored");
-	    }
-	    ast_cli(a->fd, "Peer %s status %s", a->argv[4], stx);
-	    return CLI_SUCCESS;
-*/
 
 	    buf = (char *)calloc(1, CMD_BUF_LEN);
 	    if (buf) {
@@ -2321,7 +2236,7 @@ char stx[256]={0}, sta[64];
     strcpy(stx, st); len = strlen(stx);
     uk = ukstart = stx;
     ukend = ukstart + len;
-    if (prn>1) ast_verbose("\tGet_good_status IN:'%s'\n", stx);
+    if (prn>2) ast_verbose("\tGet_good_status IN:'%s'\n", stx);//>1
     while (loop) {
 	uk2 = strchr(uk,',');
 	if (uk2==NULL) uk2 = strchr(uk,'\n');
@@ -2337,7 +2252,7 @@ char stx[256]={0}, sta[64];
 	}
 	if (uk>=ukend) loop=0;
     }
-    if (prn>1) {
+    if (prn>2) {//>1
 	memset(stx,0,256);
 	sprintf(stx,"\tGet_good_status (%d):", cnt);
 	for (loop=0; loop<MAX_STATUS; loop++) {
@@ -2556,7 +2471,7 @@ char *_begin=NULL, *uk=NULL, *uki=NULL, *uks=NULL;
 												} else {
 												    uki = strstr(buf,"timeout_makecall=");
 												    if (uki) {
-													//ast_verbose("\tread_config: watch_makecall:%s\n",buf);
+													//ast_verbose("\tread_config: timeout_makecall:%s\n",buf);
 													uks = strchr(buf,'\n'); if (uks) *uks = '\0';
 													uki += 17;
 													t_mc = atoi(uki);
@@ -2624,6 +2539,7 @@ s_route_record *rt=NULL, *nx=NULL;
     len += fprintf(fp, FORMAT_SEPARATOR_LINE);
     len += fprintf(fp, "; file: %s\n", file_name);
     len += fprintf(fp, FORMAT_SEPARATOR_LINE);
+
     gettimeofday(&curtime, NULL);
     len += fprintf(fp, "; created at: %s", ctime(&curtime.tv_sec));
     len += fprintf(fp, "; salara version: %s\n", SALARA_VERSION);
@@ -2637,6 +2553,7 @@ s_route_record *rt=NULL, *nx=NULL;
     len += fprintf(fp, FORMAT_SEPARATOR_LINE);
 
     len += fprintf(fp, "[route]\n");
+
     ast_mutex_lock(&route_lock);
 	rt = route_hdr.first;
 	if (rt) {
@@ -2738,15 +2655,6 @@ struct ast_tcptls_session_instance *i = obj;
 #endif
 }
 //----------------------------------------------------------------------
-//----------------------------------------------------------------------
-//----------------------------------------------------------------------
-//----------------------------------------------------------------------
-//----------------------------------------------------------------------
-//----------------------------------------------------------------------
-//----------------------------------------------------------------------
-//----------------------------------------------------------------------
-//----------------------------------------------------------------------
-//----------------------------------------------------------------------
 static int MakeAction(int type, char *from, char *to, char *mess, char *ctext)
 {
 char buf[512]={0};
@@ -2791,13 +2699,6 @@ int act=0, lg = salara_verbose;
 	    //sprintf(buf,"Action: Status\nChannel: %s\nActionID: %u\n\n", from, act);
 	    sprintf(buf,"Action: Command\nCommand: core show channel %s\nActionID: %u\n\n",from,act);
 	break;
-/*
-	case 4://exten. status
-	    sprintf(buf,"Action: ExtensionState\nActionID: %u\nExten: %s\nContext: ", act, from);
-	    if (strlen(ctext)) sprintf(buf+strlen(buf),"%s\n\n", ctext);
-			  else sprintf(buf+strlen(buf),"%s\n\n", context);
-	break;
-*/
     }
 
     if (lg>2) {
@@ -2820,7 +2721,6 @@ unsigned int ret=0, aid;
 char *buf=NULL;
 int uk=0, loop=1, tmp=0, done=0, stat=-1, i=0, req_type=-1, rtype;
 char *uki=NULL, *uks=NULL, *uke=NULL;
-//const char *answer_bad = "{\"result\":-2,\"text\":\"Error\"}";
 const char *answer_bad = "Error";
 const char *names[max_param] = {"operator=", "phone=", "msg="};
 const char *post_len = "Content-Length:";
@@ -3159,13 +3059,11 @@ const char *uke=NULL;
     if (curl) {
 	curl_easy_setopt(curl, CURLOPT_URL, url);
 	struct curl_slist *headers=NULL;
-	//headers = curl_slist_append(headers, "Content-Type: application/x-www-form-urlencoded");
 	if (js) headers = curl_slist_append(headers, "Content-Type: application/json");
 	   else headers = curl_slist_append(headers, "Content-Type: text/plain");
 	if (body) {//POST with json
 	    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, strlen(body));
 	    curl_easy_setopt(curl, CURLOPT_COPYPOSTFIELDS, body);
-	    //curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
 	}
 	if (crt) {//disable ssl certificates
 	    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0);
@@ -3183,7 +3081,6 @@ const char *uke=NULL;
 	    dl = chunk.size;
 	    if (dl >= str_len) dl = str_len-1;
 	    memcpy(str, (char *)chunk.memory, dl);
-	    //ret = CheckCurlEventAnswer((char *)chunk.memory, str);
 	    if (prn) ast_verbose("[%s %s] Curl_event answer :%.*s\n", AST_MODULE, TimeNowPrn(), chunk.size, (char *)chunk.memory);
 	    ret=0;
 	} else {
@@ -3239,7 +3136,6 @@ char buf[MAX_ANSWER_LEN]={0};
 			TimeNowPrn(),
 			dest_url_event, jbody, buf);
 
-    //if (jbody) free(jbody);
     json_decref(js);
 
     rm_chan_event(evt);
@@ -3264,7 +3160,6 @@ int loop=1, tp, rsa=1, cnt, ts, lg;
 
 	usleep(1000);//10000
 
-	//ast_mutex_lock(&event_lock);
 	rsa = ast_mutex_trylock(&event_lock);
 	if (rsa) {
 	    //ast_verbose("[%s %s] send_by_event thread : trylock not success !!!\n", AST_MODULE, TimeNowPrn());
@@ -3336,6 +3231,7 @@ s_act_list *abc = NULL;
     return NULL;
 }
 //----------------------------------------------------------------------
+/*
 static void periodics(void *data)
 {
 //struct ast_tcptls_session_args *desc = data;
@@ -3374,6 +3270,7 @@ char *name="";
     ast_mutex_unlock(&chan_lock);
 
 }
+*/
 //----------------------------------------------------------------------
 static struct ast_tcptls_session_args sami_desc = {
     .accept_fd = -1,
