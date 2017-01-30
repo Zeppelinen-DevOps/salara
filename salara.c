@@ -617,9 +617,9 @@ s_chan_record *bf=NULL, *nx=NULL;
 	    }
 	}
 	if (chan_hdr.counter>0) chan_hdr.counter--;
-	free(rcd->chan);
-	free(rcd->exten);
-	free(rcd->caller);
+	if (rcd->chan) free(rcd->chan);
+	if (rcd->exten) free(rcd->exten);
+	if (rcd->caller) free(rcd->caller);
 	if (rcd->uid) free(rcd->uid);
 	free(rcd); //rcd = NULL;
 	ret=0;
@@ -662,13 +662,20 @@ char *nc=NULL, *nu=NULL;
 				strcat(nc, nchan);
 				tmp->chan = nc;
 				tmp->update = 1;
+				if (!tmp->uid) {
+				    nu = (char *)calloc(1, strlen(uid) + 1);
+				    if (nu) {
+					strcat(nu, uid);
+					tmp->uid = nu;
+				    }
+				}
 			    }
 			    ret = tmp;
 			    break;
 			}
 		    }
 		} else {//make_call mode
-		    if ( (strcmp(tmp->chan, "-XXXXXXXX")) && (!strcmp(ext,"s")) && (!strcmp(tmp->caller, caller)) && (strlen(uid))) {
+		    if ( (strcmp(tmp->chan, "-XXXXXXXX")) && (!strcmp(ext,local_s)) && (!strcmp(tmp->caller, caller)) && (strlen(uid))) {
 			    nc = (char *)calloc(1, strlen(nchan) + 1);
 			    if (nc) {
 				if (tmp->chan) free(tmp->chan);
@@ -712,60 +719,6 @@ char *nc=NULL, *nu=NULL;
 
     return ret;
 }
-//------------------------------------------------------------------------
-/*
-static s_chan_record *update_exten_by_uid(const char *nchan, const char *caller, const char *ext, const char *uid)
-{
-int lg;
-s_chan_record *ret=NULL, *temp=NULL, *tmp=NULL;
-char *nc=NULL;
-
-    if ( (!ext) || (!caller) || (!nchan) ) return ret;
-
-    lg = salara_verbose;
-
-    ast_mutex_lock(&chan_lock);
-
-	if (chan_hdr.first) {
-	    tmp = chan_hdr.first;
-	    while (tmp) {
-		if (strcmp(tmp->exten, ext)) {
-		    if ( (!strcmp(tmp->chan, nchan)) && (!strcmp(tmp->uid, uid)) && (!strcmp(tmp->caller, caller)) ) {
-			nc = (char *)calloc(1, strlen(ext) + 1);
-			if (nc) {
-			    if (tmp->exten) free(tmp->exten);
-			    strcat(nc, ext);
-			    tmp->exten = nc;
-			    tmp->update = 1;
-			}
-			ret = tmp;
-			break;
-		    }
-		}
-		temp = tmp->next;
-		tmp = temp;
-	    }
-	}
-
-	if (lg>1) {//>1
-	    if (ret)
-		ast_verbose("[%s %s] UPDATE_EXTEN : first=%p end=%p counter=%d chan='%s' caller='%s' exten='%s' uid='%s' ast=%p, record found %p\n",
-				AST_MODULE, TimeNowPrn(),
-				(void *)chan_hdr.first, (void *)chan_hdr.end, chan_hdr.counter,
-				nchan, caller, ext, uid, ret->ast,
-				(void *)ret);
-	    else
-		if (lg>2) ast_verbose("[%s %s] UPDATE_EXTEN : first=%p end=%p counter=%d chan='%s' caller='%s' exten='%s' uid='%s', no valid record\n",
-				AST_MODULE, TimeNowPrn(),
-				(void *)chan_hdr.first, (void *)chan_hdr.end, chan_hdr.counter,
-				nchan, caller, ext, uid);
-	}
-
-    ast_mutex_unlock(&chan_lock);
-
-    return ret;
-}
-*/
 //------------------------------------------------------------------------
 static s_chan_record *find_chan(const char *nchan, const char *caller, char *ext, int with_del, const char *uid)
 {
