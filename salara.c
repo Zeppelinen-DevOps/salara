@@ -51,7 +51,8 @@
 #define AST_MODULE "salara"
 #define AST_MODULE_DESC "Features: transfer call; make call; get status: exten.,peer,channel; send: command,message,post"
 #define DEF_DEST_NUMBER "1234"
-#define SALARA_VERSION "3.3"//26.01.2017
+#define SALARA_VERSION "3.4"//30.01.2017
+//"3.3"//26.01.2017
 //"3.1"//20.01.2017
 //"3.0"//26.12.2016
 //"2.9"//23.12.2016
@@ -119,8 +120,10 @@ typedef struct self {
     char *chan;//[AST_CHANNEL_NAME];
     char *exten;//[AST_MAX_EXTENSION];
     char *caller;//[AST_MAX_EXTENSION];
+    char *uid;//[AST_MAX_PUBLIC_UNIQUEID]
     void *ast;
     unsigned char update;//0-update alow, !=0 - update deny
+    unsigned char mode;//0-transfer call, !=0 - make call
 } s_chan_record;
 
 typedef struct {
@@ -241,6 +244,7 @@ static const char *S_Extension = "Extension:";
 static const char *S_CallerIDNum = "CallerIDNum:";
 static const char *S_ChannelState = "ChannelState:";
 static const char *S_Application ="Application:";
+static const char *S_Uninqueid ="Uniqueid:";
 
 static const char *ChanStateName[MAX_CHAN_STATE] = {
 "DOWN",			/*!< Channel is down and available */
@@ -258,7 +262,9 @@ static const char *ChanStateName[MAX_CHAN_STATE] = {
 static const char *EventName[MAX_EVENT_NAME] = {
 "HookResponse", "Hangup", "Newchannel", "Newexten", "AgentConnect"};
 
-static const char * const global_useragent = "libcurl-agent/1.0";
+static const char *global_useragent = "libcurl-agent/1.0";
+
+static const char *local_s = "s";
 
 AST_MUTEX_DEFINE_STATIC(salara_lock);//global mutex
 
@@ -283,10 +289,10 @@ int check_delay_sec(unsigned int t)
 static char *TimeNowPrn();
 static void remove_chan_records();
 static void init_chan_records();
-static s_chan_record *add_chan_record(const char *nchan, const char *caller, const char *ext, void *data);
+static s_chan_record *add_chan_record(const char *nchan, const char *caller, const char *ext, void *data, unsigned char mode);
 static int del_chan_record(s_chan_record *rcd, int withlock);
-static s_chan_record *update_chan(const char *nchan, const char *caller, const char *ext);
-static s_chan_record *find_chan(const char *nchan, const char *caller, const char *ext, int with_del);
+static s_chan_record *update_chan(const char *nchan, const char *caller, const char *ext, const char *uid);
+static s_chan_record *find_chan(const char *nchan, const char *caller, char *ext, int with_del, const char *uid);
 static int del_chan_by_cc(const char *nchan, const char *caller);
 static void *send_by_event(void *arg);
 //------------------------------------------------------------------------
@@ -506,7 +512,7 @@ static void init_chan_records()
     ast_mutex_unlock(&chan_lock);
 }
 //------------------------------------------------------------------------
-static s_chan_record *add_chan_record(const char *nchan, const char *caller, const char *ext, void *data)
+static s_chan_record *add_chan_record(const char *nchan, const char *caller, const char *ext, void *data, unsigned char mode)
 {
 int len=0, lg;
 s_chan_record *ret=NULL, *tmp=NULL;
@@ -542,8 +548,10 @@ char *stc=NULL, *ste=NULL, *stcaller=NULL;
 		rec->chan = stc;
 		rec->exten = ste;
 		rec->caller = stcaller;
+		rec->uid = NULL;
 		rec->ast = data;
-		rec->update=0;
+		rec->update = 0;
+		rec->mode = mode;
 		rec->before = rec->next = NULL;
 		if (chan_hdr.first == NULL) {//first record
 		    chan_hdr.first = chan_hdr.end = rec;
@@ -564,12 +572,13 @@ char *stc=NULL, *ste=NULL, *stcaller=NULL;
 	}
 
 	if (lg>1) {//>1
-	    if (lg>2) ast_verbose("[%s %s] ADD_CHAN : first=%p end=%p counter=%d (chan='%s' caller='%s' exten='%s' ast=%p)\n",//>2
-			AST_MODULE, TimeNowPrn(), (void *)chan_hdr.first, (void *)chan_hdr.end, chan_hdr.counter,
-			nchan, caller, ext, data);
-	    if (ret) ast_verbose("[%s %s] ADD_CHAN : rec=%p before=%p next=%p chan='%s' caller='%s' exten='%s' ast=%p\n",
-			AST_MODULE, TimeNowPrn(), (void *)ret, (void *)ret->before, (void *)ret->next,
-			ret->chan, ret->caller, ret->exten, ret->ast);
+	    if (ret) ast_verbose("[%s %s] ADD_CHAN (%d): rec=%p before=%p next=%p, chan='%s' caller='%s' exten='%s' mode=%d ast=%p\n",
+			AST_MODULE, TimeNowPrn(), chan_hdr.counter, (void *)ret, (void *)ret->before, (void *)ret->next,
+			ret->chan, ret->caller, ret->exten, ret->mode, ret->ast);
+	    else if (lg>2) ast_verbose("[%s %s] ADD_CHAN (%d): chan='%s' caller='%s' exten='%s' mode=%d ast=%p\n",//>2
+			AST_MODULE, TimeNowPrn(),
+			//(void *)chan_hdr.first, (void *)chan_hdr.end, 
+			chan_hdr.counter, nchan, caller, ext, mode, data);
 	}
 
     ast_mutex_unlock(&chan_lock);
@@ -611,6 +620,7 @@ s_chan_record *bf=NULL, *nx=NULL;
 	free(rcd->chan);
 	free(rcd->exten);
 	free(rcd->caller);
+	if (rcd->uid) free(rcd->uid);
 	free(rcd); //rcd = NULL;
 	ret=0;
 
@@ -628,7 +638,83 @@ s_chan_record *bf=NULL, *nx=NULL;
     return ret;
 }
 //------------------------------------------------------------------------
-static s_chan_record *update_chan(const char *nchan, const char *caller, const char *ext)
+static s_chan_record *update_chan(const char *nchan, const char *caller, const char *ext, const char *uid)
+{
+int lg;
+s_chan_record *ret=NULL, *temp=NULL, *tmp=NULL;
+char *nc=NULL, *nu=NULL;
+
+    if ( (!ext) || (!caller) || (!nchan) ) return ret;
+
+    lg = salara_verbose;
+
+    ast_mutex_lock(&chan_lock);
+
+	if (chan_hdr.first) {
+	    tmp = chan_hdr.first;
+	    while (tmp) {
+		if (!tmp->mode) {//transfer mode
+		    if (!tmp->update) {
+			if ( (strcmp(tmp->chan, nchan)) && (!strcmp(tmp->exten, ext)) && (!strcmp(tmp->caller, caller)) ) {
+			    nc = (char *)calloc(1, strlen(nchan) + 1);
+			    if (nc) {
+				if (tmp->chan) free(tmp->chan);
+				strcat(nc, nchan);
+				tmp->chan = nc;
+				tmp->update = 1;
+			    }
+			    ret = tmp;
+			    break;
+			}
+		    }
+		} else {//make_call mode
+		    if ( (strcmp(tmp->chan, "-XXXXXXXX")) && (!strcmp(ext,"s")) && (!strcmp(tmp->caller, caller)) && (strlen(uid))) {
+			    nc = (char *)calloc(1, strlen(nchan) + 1);
+			    if (nc) {
+				if (tmp->chan) free(tmp->chan);
+				strcat(nc, nchan);
+				tmp->chan = nc;
+				tmp->update = 1;
+				if (!tmp->uid) {
+				    nu = (char *)calloc(1, strlen(uid) + 1);
+				    if (nu) {
+					strcat(nu, uid);
+					tmp->uid = nu;
+				    }
+				}
+			    }
+			    ret = tmp;
+			    break;
+		    }
+		}
+		temp = tmp->next;
+		tmp = temp;
+	    }
+	}
+
+	if (lg>1) {//>1
+	    if (ret)
+		ast_verbose("[%s %s] UPDATE_CHAN (%d): chan='%s' caller='%s' exten='%s' uid='%s' ast=%p mode=%d, record found %p\n",
+				AST_MODULE, TimeNowPrn(),
+				//(void *)chan_hdr.first, (void *)chan_hdr.end, 
+				chan_hdr.counter,
+				ret->chan, ret->caller, ret->exten, ret->uid, ret->ast, ret->mode,
+				(void *)ret);
+	    else
+		if (lg>2) ast_verbose("[%s %s] UPDATE_CHAN (%d): chan='%s' caller='%s' exten='%s' uid='%s', no valid record\n",
+				AST_MODULE, TimeNowPrn(),
+				//(void *)chan_hdr.first, (void *)chan_hdr.end,
+				chan_hdr.counter,
+				nchan, caller, ext, uid);
+	}
+
+    ast_mutex_unlock(&chan_lock);
+
+    return ret;
+}
+//------------------------------------------------------------------------
+/*
+static s_chan_record *update_exten_by_uid(const char *nchan, const char *caller, const char *ext, const char *uid)
 {
 int lg;
 s_chan_record *ret=NULL, *temp=NULL, *tmp=NULL;
@@ -643,13 +729,13 @@ char *nc=NULL;
 	if (chan_hdr.first) {
 	    tmp = chan_hdr.first;
 	    while (tmp) {
-		if (!tmp->update) {
-		    if ( /*(strcmp(tmp->chan, nchan)) &&*/ (!strcmp(tmp->exten, ext)) && (!strcmp(tmp->caller, caller)) ) {
-			nc = (char *)calloc(1, strlen(nchan) + 1);
+		if (strcmp(tmp->exten, ext)) {
+		    if ( (!strcmp(tmp->chan, nchan)) && (!strcmp(tmp->uid, uid)) && (!strcmp(tmp->caller, caller)) ) {
+			nc = (char *)calloc(1, strlen(ext) + 1);
 			if (nc) {
-			    if (tmp->chan) free(tmp->chan);
-			    strcat(nc, nchan);
-			    tmp->chan = nc;
+			    if (tmp->exten) free(tmp->exten);
+			    strcat(nc, ext);
+			    tmp->exten = nc;
 			    tmp->update = 1;
 			}
 			ret = tmp;
@@ -663,26 +749,27 @@ char *nc=NULL;
 
 	if (lg>1) {//>1
 	    if (ret)
-		ast_verbose("[%s %s] UPDATE_CHAN : first=%p end=%p counter=%d chan='%s' caller='%s' exten='%s' ast=%p, record found %p\n",
+		ast_verbose("[%s %s] UPDATE_EXTEN : first=%p end=%p counter=%d chan='%s' caller='%s' exten='%s' uid='%s' ast=%p, record found %p\n",
 				AST_MODULE, TimeNowPrn(),
 				(void *)chan_hdr.first, (void *)chan_hdr.end, chan_hdr.counter,
-				nchan, caller, ext, ret->ast,
+				nchan, caller, ext, uid, ret->ast,
 				(void *)ret);
 	    else
-		if (lg>2) ast_verbose("[%s %s] UPDATE_CHAN : first=%p end=%p counter=%d chan='%s' caller='%s' exten='%s', no valid record\n",
+		if (lg>2) ast_verbose("[%s %s] UPDATE_EXTEN : first=%p end=%p counter=%d chan='%s' caller='%s' exten='%s' uid='%s', no valid record\n",
 				AST_MODULE, TimeNowPrn(),
 				(void *)chan_hdr.first, (void *)chan_hdr.end, chan_hdr.counter,
-				nchan, caller, ext);
+				nchan, caller, ext, uid);
 	}
 
     ast_mutex_unlock(&chan_lock);
 
     return ret;
 }
+*/
 //------------------------------------------------------------------------
-static s_chan_record *find_chan(const char *nchan, const char *caller, const char *ext, int with_del)
+static s_chan_record *find_chan(const char *nchan, const char *caller, char *ext, int with_del, const char *uid)
 {
-int lg;
+int lg, yes=0, en=0;
 s_chan_record *ret=NULL, *temp=NULL, *tmp=NULL;
 
     if (!ext) return ret;
@@ -693,30 +780,40 @@ s_chan_record *ret=NULL, *temp=NULL, *tmp=NULL;
 
 	if (chan_hdr.first) {
 	    tmp = chan_hdr.first;
+	    if ((!strcmp(ext,local_s)) || (!strlen(ext))) en=1;
 	    while (tmp) {
-		if ( (!strcmp(tmp->chan, nchan)) && (!strcmp(tmp->exten, ext)) && (!strcmp(tmp->caller, caller)) ) {
+		if (!tmp->mode) {
+		    if ( (!strcmp(tmp->chan, nchan)) && (!strcmp(tmp->exten, ext)) && (!strcmp(tmp->caller, caller)) ) yes=1;
+		} else {
+		    if ( (!strcmp(tmp->chan, nchan)) && (!strcmp(tmp->uid, uid)) && (!strcmp(tmp->caller, caller)) ) yes=1;
+		}
+		if (yes) {
 		    ret = tmp;
+		    if (en) strcpy(ext, ret->exten);
 		    break;
 		} else {
 		    temp = tmp->next;
 		    tmp = temp;
+		    yes=0;
 		}
 	    }
 	}
 
 	if (ret) {
-	    if (lg>1) ast_verbose("[%s %s] FIND_CHAN : first=%p end=%p counter=%d chan='%s' caller='%s' exten='%s' ast=%p, record found %p (with_del=%d)\n",
+	    if (lg>1) ast_verbose("[%s %s] FIND_CHAN (%d): chan='%s' caller='%s' exten='%s' uid='%s' ast=%p, record found %p (with_del=%d)\n",
 			AST_MODULE, TimeNowPrn(),
-			(void *)chan_hdr.first, (void *)chan_hdr.end, chan_hdr.counter,
-			nchan, caller, ext, ret->ast,
+			//(void *)chan_hdr.first, (void *)chan_hdr.end, 
+			chan_hdr.counter,
+			ret->chan, ret->caller, ret->exten, ret->uid, ret->ast,
 			(void *)ret,
 			with_del);
 	    if (with_del) del_chan_record(ret, 0);
 	} else {
-	    if (lg>2) ast_verbose("[%s %s] FIND_CHAN : first=%p end=%p counter=%d chan='%s' caller='%s' exten='%s', record not found (with_del=%d)\n",
+	    if (lg>2) ast_verbose("[%s %s] FIND_CHAN (%d): chan='%s' caller='%s' exten='%s' uid='%s', record not found (with_del=%d)\n",
 			AST_MODULE, TimeNowPrn(),
-			(void *)chan_hdr.first, (void *)chan_hdr.end, chan_hdr.counter,
-			nchan, caller, ext, with_del);
+			//(void *)chan_hdr.first, (void *)chan_hdr.end, 
+			chan_hdr.counter,
+			nchan, caller, ext, uid, with_del);
 	}
 
     ast_mutex_unlock(&chan_lock);
@@ -1470,7 +1567,7 @@ CURLcode er;
 
     res_transfer = ast_transfer(ast, dest_number);
 
-    if (res_transfer>0) add_chan_record(ast_channel_name(ast), cid, dest_number, (void *)ast);
+    if (res_transfer>0) add_chan_record(ast_channel_name(ast), cid, dest_number, (void *)ast, 0);//mode=0 - transfer call
 
     if (lg) {
 	stat = ast_channel_state(ast); if (stat > MAX_CHAN_STATE-1) stat=MAX_CHAN_STATE-1;
@@ -1586,10 +1683,11 @@ unsigned char i=0;
 	    case 3://Newexten
 		if (lg>2) ast_verbose("%s",hook_tmp_str);
 		int cs = MAX_CHAN_STATE-1;
-		char chan[AST_CHANNEL_NAME]; char exten[AST_MAX_EXTENSION]; 
+		char chan[AST_CHANNEL_NAME]; char exten[AST_MAX_EXTENSION]; char uid[AST_MAX_PUBLIC_UNIQUEID];
 		char caller[AST_MAX_EXTENSION]; char chan_state[AST_MAX_EXTENSION]; char app[AST_MAX_EXTENSION];
 		memset(chan,0,AST_CHANNEL_NAME); memset(exten,0,AST_MAX_EXTENSION);
-		memset(caller,0,AST_MAX_EXTENSION); memset(chan_state,0,AST_MAX_EXTENSION); memset(app,0,AST_MAX_EXTENSION);
+		memset(caller,0,AST_MAX_EXTENSION); memset(chan_state,0,AST_MAX_EXTENSION);
+		memset(uid,0,AST_MAX_PUBLIC_UNIQUEID); memset(app,0,AST_MAX_EXTENSION);
 		uk = strstr(hook_tmp_str, S_Channel);
 		if (uk) {
 		    uk += strlen(S_Channel); if (*uk == ' ') uk++; uk2 = strstr(uk,"\r\n");
@@ -1637,16 +1735,25 @@ unsigned char i=0;
 			memcpy(app, uk, dl);
 		    }
 		}
+		uk = strstr(hook_tmp_str, S_Uninqueid);
+		if (uk) {
+		    uk += strlen(S_Uninqueid); if (*uk == ' ') uk++; uk2 = strstr(uk,"\r\n");
+		    if (uk2) {
+			dl = uk2 - uk; if (dl >= AST_MAX_PUBLIC_UNIQUEID) dl=AST_MAX_PUBLIC_UNIQUEID-1;
+			memcpy(uid, uk, dl);
+		    }
+		}
 
 		if ((cs<0) || (cs>=MAX_CHAN_STATE)) cs = MAX_CHAN_STATE-1;
 
-		if (lg>=2) ast_verbose("[%s %s] '%s' event : chan='%s' caller='%s' exten='%s' state=%d(%s) app='%s'\n",//>=2
-				AST_MODULE, TimeNowPrn(), event, chan, caller, exten, cs, &ChanStateName[cs][0], app);
+		if (lg>=2) ast_verbose("[%s %s] '%s' event : chan='%s' caller='%s' exten='%s' uid='%s' state=%d(%s) app='%s'\n",//>=2
+				AST_MODULE, TimeNowPrn(), event, chan, caller, exten, uid, cs, &ChanStateName[cs][0], app);
 		if (tp==1) {//Hangup
-		    if ( (strlen(chan)) && (strlen(exten)) && (strlen(caller)) ) {
+		    //if ( (strlen(chan)) && (strlen(exten)) && (strlen(caller)) ) 
+		    if ( (strlen(chan)) && (strlen(uid)) && (strlen(caller)) ) {
 			switch (hangup) {
 			    case 1://used for transfer calls only
-				if (find_chan(chan, caller, exten, 1)) add_event_list(make_chan_event(tp, chan, caller, exten, cs, app));
+				if (find_chan(chan, caller, exten, 1, uid)) add_event_list(make_chan_event(tp, chan, caller, exten, cs, app));
 			    break;
 			    case 2://used for all calls
 				add_event_list(make_chan_event(tp, chan, caller, exten, cs, app));
@@ -1656,10 +1763,10 @@ unsigned char i=0;
 		} else if (tp==2) {//Newchannel
 //if (lg) ast_verbose("[%s %s] event='%s' body=[\n%s]\n",AST_MODULE,TimeNowPrn(),event,hook_tmp_str);
 		    if ( (strlen(chan)) && (strlen(exten)) && (strlen(caller)) ) {
-			update_chan(chan, caller, exten);
+			update_chan(chan, caller, exten, uid);
 			switch (newchannel) {
 			    case 1://used for transfer calls only
-				if (find_chan(chan, caller, exten, 0))
+				if (find_chan(chan, caller, exten, 0, uid))
 				    add_event_list(make_chan_event(tp, chan, caller, exten, cs, app));
 			    break;
 			    case 2://used for all calls
@@ -1669,18 +1776,15 @@ unsigned char i=0;
 		    }
 		} else if (tp==3) {//Newexten
 		    if ( (strlen(chan)) && (strlen(exten)) && (strlen(caller)) ) {
-			if (watch_makecall) {
-			    if (cs==6) update_chan(chan, caller, exten);
-			}
 			switch (newexten) {
 			    case 1://used for transfer call with status UP
 				if (cs==6) {//when state=UP
-				    if (find_chan(chan, caller, exten, 0))//when find caller:exten in chan_list
+				    if (find_chan(chan, caller, exten, 0, uid))//when find caller:exten in chan_list
 					add_event_list(make_chan_event(tp, chan, caller, exten, cs, app));
 				}
 			    break;
 			    case 2://used for transfer call with all status
-				if (find_chan(chan, caller, exten, 0))//when find caller:exten in chan_list
+				if (find_chan(chan, caller, exten, 0, uid))//when find caller:exten in chan_list
 					add_event_list(make_chan_event(tp, chan, caller, exten, cs, app));
 			    break;
 			    case 3://used for all call with all status
@@ -1824,7 +1928,8 @@ unsigned char i;
 		ast_cli(a->fd,"adr=%p - %p total=%u\n",(void *)chan_hdr.first, (void *)chan_hdr.end, chan_hdr.counter);
 		tmp = chan_hdr.first;
 		while (tmp) {
-		    ast_cli(a->fd,"chan='%s' exten='%s' caller='%s' ast=%p update=%d\n", tmp->chan, tmp->exten, tmp->caller, tmp->ast, tmp->update);
+		    ast_cli(a->fd,"chan='%s' exten='%s' caller='%s' uid='%s' ast=%p update=%d\n",
+				    tmp->chan, tmp->exten, tmp->caller, tmp->uid, tmp->ast, tmp->update);
 		    temp = tmp->next;
 		    tmp = temp;
 		}
@@ -1924,9 +2029,6 @@ char called[AST_MAX_EXTENSION];
 //------------------------------------------------------------------------------
 static char *cli_salara_del_chan_record(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a)
 {
-int cr=0, cd=0;
-char chan[AST_MAX_EXTENSION];
-char caller[AST_MAX_EXTENSION];
 
     switch (cmd) {
 	case CLI_INIT:
@@ -1944,21 +2046,7 @@ char caller[AST_MAX_EXTENSION];
 
     if (a->argc < 5) return CLI_SHOWUSAGE;
 
-
-    if (strlen(a->argv[3])>0) {
-	memset(chan,0,AST_MAX_EXTENSION);
-	strcpy(chan, a->argv[3]);
-	cr = 1;
-    }
-    if (strlen(a->argv[4])>0) {
-	memset(caller,0,AST_MAX_EXTENSION);
-	strcpy(caller, a->argv[4]);
-	cd = 1;
-    }
-
-    if ((!cd) || (!cr)) return CLI_SHOWUSAGE;
-
-    ast_cli(a->fd, "\tSalara: delele %d records from chan_record_list\n", del_chan_by_cc(chan, caller));
+    ast_cli(a->fd, "\tSalara: delele %d records from chan_record_list\n", del_chan_by_cc(a->argv[3], a->argv[4]));
 
     return CLI_SUCCESS;
 }
@@ -2673,7 +2761,7 @@ int act=0, lg = salara_verbose;
 	case 0://outgoing call
 	    if (watch_makecall) {
 		sprintf(buf,"%s/%s-XXXXXXXX",StrUpr(Tech),from);
-		add_chan_record(buf, from, to, NULL);
+		add_chan_record(buf, from, to, NULL, 1);//make call
 	    }
 	    sprintf(buf,"Action: Originate\nChannel: %s/%s\nContext: %s\nExten: %s\nPriority: 1\n"
 			"Callerid: %s\nTimeout: %d\nActionID: %u\n\n",
