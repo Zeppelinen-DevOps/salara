@@ -51,7 +51,8 @@
 #define AST_MODULE "salara"
 #define AST_MODULE_DESC "Features: transfer call; make call; get status: exten.,peer,channel; send: command,message,post"
 #define DEF_DEST_NUMBER "1234"
-#define SALARA_VERSION "3.4"//30.01.2017
+#define SALARA_VERSION "3.5"//31.01.2017
+//"3.4"//30.01.2017
 //"3.3"//26.01.2017
 //"3.1"//20.01.2017
 //"3.0"//26.12.2016
@@ -121,6 +122,7 @@ typedef struct self {
     char *exten;//[AST_MAX_EXTENSION];
     char *caller;//[AST_MAX_EXTENSION];
     char *uid;//[AST_MAX_PUBLIC_UNIQUEID]
+    unsigned int aid;
     void *ast;
     unsigned char update;//0-update alow, !=0 - update deny
     unsigned char mode;//0-transfer call, !=0 - make call
@@ -245,6 +247,7 @@ static const char *S_CallerIDNum = "CallerIDNum:";
 static const char *S_ChannelState = "ChannelState:";
 static const char *S_Application ="Application:";
 static const char *S_Uninqueid ="Uniqueid:";
+static const char *SA_Error ="Error";
 
 static const char *ChanStateName[MAX_CHAN_STATE] = {
 "DOWN",			/*!< Channel is down and available */
@@ -289,11 +292,12 @@ int check_delay_sec(unsigned int t)
 static char *TimeNowPrn();
 static void remove_chan_records();
 static void init_chan_records();
-static s_chan_record *add_chan_record(const char *nchan, const char *caller, const char *ext, void *data, unsigned char mode);
+static s_chan_record *add_chan_record(const char *nchan, const char *caller, const char *ext, void *data, unsigned char mode, unsigned int aid);
 static int del_chan_record(s_chan_record *rcd, int withlock);
 static s_chan_record *update_chan(const char *nchan, const char *caller, const char *ext, const char *uid);
 static s_chan_record *find_chan(const char *nchan, const char *caller, char *ext, int with_del, const char *uid);
 static int del_chan_by_cc(const char *nchan, const char *caller);
+static void del_chan_by_aid(unsigned int aid);
 static void *send_by_event(void *arg);
 //------------------------------------------------------------------------
 inline static s_chan_event *make_chan_event(int type, const char *nchan, const char *caller, const char *exten, int stat, const char *app)
@@ -512,7 +516,7 @@ static void init_chan_records()
     ast_mutex_unlock(&chan_lock);
 }
 //------------------------------------------------------------------------
-static s_chan_record *add_chan_record(const char *nchan, const char *caller, const char *ext, void *data, unsigned char mode)
+static s_chan_record *add_chan_record(const char *nchan, const char *caller, const char *ext, void *data, unsigned char mode, unsigned int aid)
 {
 int len=0, lg;
 s_chan_record *ret=NULL, *tmp=NULL;
@@ -552,6 +556,7 @@ char *stc=NULL, *ste=NULL, *stcaller=NULL;
 		rec->ast = data;
 		rec->update = 0;
 		rec->mode = mode;
+		rec->aid = aid;
 		rec->before = rec->next = NULL;
 		if (chan_hdr.first == NULL) {//first record
 		    chan_hdr.first = chan_hdr.end = rec;
@@ -572,13 +577,13 @@ char *stc=NULL, *ste=NULL, *stcaller=NULL;
 	}
 
 	if (lg>1) {//>1
-	    if (ret) ast_verbose("[%s %s] ADD_CHAN (%d): rec=%p before=%p next=%p, chan='%s' caller='%s' exten='%s' mode=%d ast=%p\n",
+	    if (ret) ast_verbose("[%s %s] ADD_CHAN (%d): rec=%p before=%p next=%p, chan='%s' caller='%s' exten='%s' mode=%d aid=%u ast=%p\n",
 			AST_MODULE, TimeNowPrn(), chan_hdr.counter, (void *)ret, (void *)ret->before, (void *)ret->next,
-			ret->chan, ret->caller, ret->exten, ret->mode, ret->ast);
-	    else if (lg>2) ast_verbose("[%s %s] ADD_CHAN (%d): chan='%s' caller='%s' exten='%s' mode=%d ast=%p\n",//>2
+			ret->chan, ret->caller, ret->exten, ret->mode, ret->aid, ret->ast);
+	    else if (lg>2) ast_verbose("[%s %s] ADD_CHAN (%d): chan='%s' caller='%s' exten='%s' mode=%d aid=%u ast=%p\n",//>2
 			AST_MODULE, TimeNowPrn(),
 			//(void *)chan_hdr.first, (void *)chan_hdr.end, 
-			chan_hdr.counter, nchan, caller, ext, mode, data);
+			chan_hdr.counter, nchan, caller, ext, mode, aid, data);
 	}
 
     ast_mutex_unlock(&chan_lock);
@@ -590,6 +595,7 @@ static int del_chan_record(s_chan_record *rcd, int withlock)
 {
 int ret=-1, lg;
 s_chan_record *bf=NULL, *nx=NULL;
+unsigned int aid=0;
 
     if (!rcd) return ret;
 
@@ -617,6 +623,7 @@ s_chan_record *bf=NULL, *nx=NULL;
 	    }
 	}
 	if (chan_hdr.counter>0) chan_hdr.counter--;
+	aid = rcd->aid;
 	if (rcd->chan) free(rcd->chan);
 	if (rcd->exten) free(rcd->exten);
 	if (rcd->caller) free(rcd->caller);
@@ -624,14 +631,15 @@ s_chan_record *bf=NULL, *nx=NULL;
 	free(rcd); //rcd = NULL;
 	ret=0;
 
-	if ((lg>1) || (chan_hdr.counter>0))
-		ast_verbose("[%s %s] DEL_CHAN : rec=%p first=%p end=%p counter=%d\n",
+	if ((lg) || (chan_hdr.counter>0))//>1 || >0
+		ast_verbose("[%s %s] DEL_CHAN : rec=%p first=%p end=%p counter=%d (aid=%u)\n",
 			AST_MODULE,
 			TimeNowPrn(),
 			(void *)rcd,
 			(void *)chan_hdr.first,
 			(void *)chan_hdr.end,
-			chan_hdr.counter);
+			chan_hdr.counter,
+			aid);
 
     if (withlock) ast_mutex_unlock(&chan_lock);
 
@@ -701,11 +709,11 @@ char *nc=NULL, *nu=NULL;
 
 	if (lg>1) {//>1
 	    if (ret)
-		ast_verbose("[%s %s] UPDATE_CHAN (%d): chan='%s' caller='%s' exten='%s' uid='%s' ast=%p mode=%d, record found %p\n",
+		ast_verbose("[%s %s] UPDATE_CHAN (%d): chan='%s' caller='%s' exten='%s' uid='%s' mode=%d aid=%u ast=%p, record found %p\n",
 				AST_MODULE, TimeNowPrn(),
 				//(void *)chan_hdr.first, (void *)chan_hdr.end, 
 				chan_hdr.counter,
-				ret->chan, ret->caller, ret->exten, ret->uid, ret->ast, ret->mode,
+				ret->chan, ret->caller, ret->exten, ret->uid, ret->mode, ret->aid, ret->ast,
 				(void *)ret);
 	    else
 		if (lg>2) ast_verbose("[%s %s] UPDATE_CHAN (%d): chan='%s' caller='%s' exten='%s' uid='%s', no valid record\n",
@@ -753,11 +761,11 @@ s_chan_record *ret=NULL, *temp=NULL, *tmp=NULL;
 	}
 
 	if (ret) {
-	    if (lg>1) ast_verbose("[%s %s] FIND_CHAN (%d): chan='%s' caller='%s' exten='%s' uid='%s' ast=%p, record found %p (with_del=%d)\n",
+	    if (lg>1) ast_verbose("[%s %s] FIND_CHAN (%d): chan='%s' caller='%s' exten='%s' uid='%s' aid=%u ast=%p, record found %p (with_del=%d)\n",
 			AST_MODULE, TimeNowPrn(),
 			//(void *)chan_hdr.first, (void *)chan_hdr.end, 
 			chan_hdr.counter,
-			ret->chan, ret->caller, ret->exten, ret->uid, ret->ast,
+			ret->chan, ret->caller, ret->exten, ret->uid, ret->aid, ret->ast,
 			(void *)ret,
 			with_del);
 	    if (with_del) del_chan_record(ret, 0);
@@ -804,6 +812,31 @@ s_chan_record *ret=NULL, *temp=NULL, *tmp=NULL;
     return cnt;
 }
 //------------------------------------------------------------------------
+static void del_chan_by_aid(unsigned int aid)
+{
+s_chan_record *temp=NULL, *tmp=NULL;
+
+    if (!aid) return;
+
+    ast_mutex_lock(&chan_lock);
+
+	if (chan_hdr.first) {
+	    tmp = chan_hdr.first;
+	    while (tmp) {
+		if ((tmp->aid == aid) && (tmp->ast == NULL)) {
+		    del_chan_record(tmp, 0);
+		    break;
+		} else {
+		    temp = tmp->next;
+		    tmp = temp;
+		}
+	    }
+	}
+
+    ast_mutex_unlock(&chan_lock);
+
+    return;
+}
 //------------------------------------------------------------------------
 //------------------------------------------------------------------------
 static int delete_act(s_act_list *arcd, int withlock)
@@ -902,7 +935,7 @@ s_act_list *temp=NULL, *tmp=NULL;
 		len = strlen(resp); if (len>=SIZE_OF_RESP) len=SIZE_OF_RESP-1;
 		memset((char *)tmp->act->resp, 0, SIZE_OF_RESP);
 		if (len>0) memcpy((char *)tmp->act->resp, resp, len);
-		if (lg>2)//>=2
+		if (lg)//>2
 		    ast_verbose("[%s %s] update_act_by_index : adr=%p act_id=%u status=%d resp='%s'\n",
 			AST_MODULE, TimeNowPrn(),
 			(void *)tmp,
@@ -1505,7 +1538,7 @@ CURLcode er;
 	strcpy(dest_number, buf);
     }
 
-    stat = ast_extension_state(NULL, context, dest_number);//(struct ast_channel *c, const char *context, const char *exten)
+    stat = ast_extension_state(ast, context, dest_number);//(struct ast_channel *c, const char *context, const char *exten)
 
     if (!check_stat(stat)) {
 	if (lg>1) ast_verbose("[%s %s] Extension '%s' status (%d) OK ! (%s)\n", AST_MODULE, TimeNowPrn(), dest_number, stat, ast_extension_state2str(stat));
@@ -1517,13 +1550,18 @@ CURLcode er;
 	if (lg) ast_verbose("[%s %s] Route call to default dest '%s'\n", AST_MODULE, TimeNowPrn(), dest_number);
     }
 
+    stat = ast_channel_state(ast); //if (stat > MAX_CHAN_STATE-1) stat=MAX_CHAN_STATE-1;
+    /* Check if the channel supports transfer before we try it */
+//    if (ast->tech->transfer) {
 
-    res_transfer = ast_transfer(ast, dest_number);
+	res_transfer = ast_transfer(ast, dest_number);
 
-    if (res_transfer>0) add_chan_record(ast_channel_name(ast), cid, dest_number, (void *)ast, 0);//mode=0 - transfer call
+	if (res_transfer>0) add_chan_record(ast_channel_name(ast), cid, dest_number, (void *)ast, 0, 0);//mode=0 - transfer call, 0 - aid
+
+//    }
 
     if (lg) {
-	stat = ast_channel_state(ast); if (stat > MAX_CHAN_STATE-1) stat=MAX_CHAN_STATE-1;
+	//stat = ast_channel_state(ast); if (stat > MAX_CHAN_STATE-1) stat=MAX_CHAN_STATE-1;
 	ast_verbose("[%s %s] CallerID=[%s] called=[%s] transfer(%d) to '%s' status=%d (%s)\n",
 		AST_MODULE, TimeNowPrn(),
 		ast_channel_name(ast),
@@ -1610,7 +1648,10 @@ unsigned char i=0;
 				    uk = strstr(hook_tmp_str, S_Response);
 				    if (uk) {
 					uk += strlen(S_Response);
-					if (*uk == ' ') uk++; sti=-1; if (strstr(uk, S_Success)) sti=0; rdy=1;
+					if (*uk == ' ') uk++;
+					sti=-1;
+					if (strstr(uk, S_Success)) sti=0;
+					rdy=1;
 				    }
 				}
 			    }
@@ -1625,8 +1666,11 @@ unsigned char i=0;
 				}
 			    }
 //if (lg) ast_verbose("[hook] event='%s' action_id=%d stat=%d stat_text='%s'\n", event, id, sti, stx);
-			    if (update_act_by_index(id, sti, stx) != 0)
+			    if (update_act_by_index(id, sti, stx) != 0) {
 				if (lg>=2) ast_verbose("[hook] event='%s' action_id=%d not found in act_list\n", event, id);
+			    } else {
+				if (strstr(stx,SA_Error)) del_chan_by_aid(id);
+			    }
 			}
 		    }
 		} else if (lg) ast_verbose("[%s %s] event='%s' ActionID not found\n", AST_MODULE, TimeNowPrn(), event);
@@ -1881,8 +1925,8 @@ unsigned char i;
 		ast_cli(a->fd,"adr=%p - %p total=%u\n",(void *)chan_hdr.first, (void *)chan_hdr.end, chan_hdr.counter);
 		tmp = chan_hdr.first;
 		while (tmp) {
-		    ast_cli(a->fd,"chan='%s' exten='%s' caller='%s' uid='%s' ast=%p update=%d\n",
-				    tmp->chan, tmp->exten, tmp->caller, tmp->uid, tmp->ast, tmp->update);
+		    ast_cli(a->fd,"chan='%s' exten='%s' caller='%s' uid='%s' aid=%u update=%d ast=%p\n",
+				    tmp->chan, tmp->exten, tmp->caller, tmp->uid, tmp->aid, tmp->update, tmp->ast);
 		    temp = tmp->next;
 		    tmp = temp;
 		}
@@ -2714,7 +2758,7 @@ int act=0, lg = salara_verbose;
 	case 0://outgoing call
 	    if (watch_makecall) {
 		sprintf(buf,"%s/%s-XXXXXXXX",StrUpr(Tech),from);
-		add_chan_record(buf, from, to, NULL, 1);//make call
+		add_chan_record(buf, from, to, NULL, 1, act);//make call, aid
 	    }
 	    sprintf(buf,"Action: Originate\nChannel: %s/%s\nContext: %s\nExten: %s\nPriority: 1\n"
 			"Callerid: %s\nTimeout: %d\nActionID: %u\n\n",
@@ -3272,14 +3316,13 @@ s_act_list *abc = NULL;
     return NULL;
 }
 //----------------------------------------------------------------------
-/*
 static void periodics(void *data)
 {
-//struct ast_tcptls_session_args *desc = data;
-int cnt, stat=100, lg = salara_verbose;
-struct ast_channel *ast=NULL;
+////struct ast_tcptls_session_args *desc = data;
+int cnt, lg = salara_verbose;// stat=100;
+//struct ast_channel *ast=NULL;
 s_chan_record *tmp=NULL, *rec=NULL;
-char *name="";
+//char *name="";
 
     if (ast_mutex_trylock(&chan_lock)) {
 	if (lg) ast_verbose("[%s %s] Periodics : trylock not success !!!\n", AST_MODULE, TimeNowPrn());
@@ -3288,21 +3331,25 @@ char *name="";
 
     cnt = chan_hdr.counter;
     if (cnt>0) {
+	if (lg) ast_verbose("[%s %s] Periodics : total_records=%d\n", AST_MODULE, TimeNowPrn(), cnt);
 	rec = chan_hdr.first;
 	while ((rec) && (cnt>0)) {
-	    ast = (struct ast_channel *)rec->ast;
+/*	    ast = (struct ast_channel *)rec->ast;
 	    if (ast) {
 		//ast_channel_lock(ast);//!!!
 		stat = ast_channel_state(ast);
 		name = strdupa(ast_channel_name(ast));
 		//ast_channel_unlock(ast);//!!!
 		if (stat > MAX_CHAN_STATE-1) stat=MAX_CHAN_STATE-1;
-		if (lg) ast_verbose("[%s %s] Periodics : total=%d channel=[%s] status=%d (%s) ast=%p\n",
-					AST_MODULE, TimeNowPrn(), cnt, name, stat, ChanStateName[stat], (void *)ast);
+		if (lg) ast_verbose("\t -- chan=[%s] state=%d (%s) ast=%p\n", name, stat, ChanStateName[stat], (void *)ast);
 		if ((!strlen(name)) && (dirty)) {
-		    del_chan_record(rec, 0);
+		    //del_chan_record(rec, 0);
+		    cnt = chan_hdr.counter;
 		}
-	    }
+	    } else {*/
+		if (lg) ast_verbose("\t -- chan='%s' exten='%s' caller='%s' uid='%s' aid=%u ast=%p\n",
+					rec->chan, rec->exten, rec->caller, rec->uid, rec->aid, (void *)rec->ast);
+/*	    }*/
 	    tmp = rec->next;
 	    rec = tmp;
 	    cnt--;
@@ -3311,13 +3358,12 @@ char *name="";
     ast_mutex_unlock(&chan_lock);
 
 }
-*/
 //----------------------------------------------------------------------
 static struct ast_tcptls_session_args sami_desc = {
     .accept_fd = -1,
     .master = AST_PTHREADT_NULL,
     .tls_cfg = NULL,
-    .poll_timeout = 10000,	// wake up every 5 seconds
+    .poll_timeout = 5000,	// wake up every 5 seconds
     .periodic_fn = NULL,//periodics,//purge_old_stuff,
     .name = "Salara server",
     .accept_fn = srv_nitka,	//tcptls_server_root,	// thread doing the accept()
