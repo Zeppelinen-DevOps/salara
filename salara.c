@@ -51,7 +51,8 @@
 #define AST_MODULE "salara"
 #define AST_MODULE_DESC "Features: transfer call; make call; get status: exten.,peer,channel; send: command,message,post"
 #define DEF_DEST_NUMBER "1234"
-#define SALARA_VERSION "3.5"//31.01.2017
+#define SALARA_VERSION "3.6"//02.02.2017
+//"3.5"//31.01.2017
 //"3.4"//30.01.2017
 //"3.3"//26.01.2017
 //"3.1"//20.01.2017
@@ -228,6 +229,8 @@ static s_route_hdr route_hdr = {NULL,NULL,0};
 static unsigned int srv_time_cnt=0;
 
 static char Tech[] = "sip";
+
+static char *Obraz = "-XXXXXXXX";
 
 static char *ActType[MAX_ACT_TYPE] = {"Make call","Send message", "Get status peer", "Get status channel", "Get status exten", "Unknown"};
 
@@ -631,7 +634,7 @@ unsigned int aid=0;
 	free(rcd); //rcd = NULL;
 	ret=0;
 
-	if ((lg) || (chan_hdr.counter>0))//>1 || >0
+	if ((lg>1) || (chan_hdr.counter>0))//>1 || >0
 		ast_verbose("[%s %s] DEL_CHAN : rec=%p first=%p end=%p counter=%d (aid=%u)\n",
 			AST_MODULE,
 			TimeNowPrn(),
@@ -683,7 +686,7 @@ char *nc=NULL, *nu=NULL;
 			}
 		    }
 		} else {//make_call mode
-		    if ( (strcmp(tmp->chan, "-XXXXXXXX")) && (!strcmp(ext,local_s)) && (!strcmp(tmp->caller, caller)) && (strlen(uid))) {
+		    if ( (strcmp(tmp->chan, Obraz)) && (!strcmp(ext,local_s)) && (!strcmp(tmp->caller, caller)) && (strlen(uid))) {
 			    nc = (char *)calloc(1, strlen(nchan) + 1);
 			    if (nc) {
 				if (tmp->chan) free(tmp->chan);
@@ -697,6 +700,7 @@ char *nc=NULL, *nu=NULL;
 					tmp->uid = nu;
 				    }
 				}
+				//if (!tmp->ast) tmp->ast = ast_channel_get_by_name(nc);
 			    }
 			    ret = tmp;
 			    break;
@@ -935,7 +939,7 @@ s_act_list *temp=NULL, *tmp=NULL;
 		len = strlen(resp); if (len>=SIZE_OF_RESP) len=SIZE_OF_RESP-1;
 		memset((char *)tmp->act->resp, 0, SIZE_OF_RESP);
 		if (len>0) memcpy((char *)tmp->act->resp, resp, len);
-		if (lg)//>2
+		if (lg>2)//>2
 		    ast_verbose("[%s %s] update_act_by_index : adr=%p act_id=%u status=%d resp='%s'\n",
 			AST_MODULE, TimeNowPrn(),
 			(void *)tmp,
@@ -1476,7 +1480,7 @@ struct MemoryStruct chunk;
 //----------------------------------------------------------------------
 static int app_salara_exec(struct ast_channel *ast, const char *data)
 {
-int lg;
+int lg, go=1;
 int ret_curl=-1, stat=-1, res_transfer;
 char *cid=NULL, *info=NULL, *buf=NULL;
 int ssl=0, js=0;
@@ -1543,6 +1547,7 @@ CURLcode er;
     if (!check_stat(stat)) {
 	if (lg>1) ast_verbose("[%s %s] Extension '%s' status (%d) OK ! (%s)\n", AST_MODULE, TimeNowPrn(), dest_number, stat, ast_extension_state2str(stat));
     } else {
+	go=0;
 	if (lg) ast_verbose("[%s %s] Extension '%s' status (%d) BAD ! (%s)\n", AST_MODULE, TimeNowPrn(), dest_number, stat, ast_extension_state2str(stat));
 	memset(dest_number,0,AST_MAX_EXTENSION);
 	strcpy(dest_number, DEF_DEST_NUMBER);
@@ -1550,19 +1555,18 @@ CURLcode er;
 	if (lg) ast_verbose("[%s %s] Route call to default dest '%s'\n", AST_MODULE, TimeNowPrn(), dest_number);
     }
 
-    stat = ast_channel_state(ast); //if (stat > MAX_CHAN_STATE-1) stat=MAX_CHAN_STATE-1;
-    /* Check if the channel supports transfer before we try it */
-//    if (ast->tech->transfer) {
+    if (!go) {
+	stat = ast_extension_state(NULL, context, dest_number);//(struct ast_channel *c, const char *context, const char *exten)
+	if (!check_stat(stat)) {
+	    go=1;
+	    if (lg>1) ast_verbose("[%s %s] Extension '%s' status (%d) OK ! (%s)\n", AST_MODULE, TimeNowPrn(), dest_number, stat, ast_extension_state2str(stat));
+	} else {
+	    if (lg) ast_verbose("[%s %s] Extension '%s' status (%d) BAD ! (%s)\n", AST_MODULE, TimeNowPrn(), dest_number, stat, ast_extension_state2str(stat));
+	}
+    }
 
-	res_transfer = ast_transfer(ast, dest_number);
-
-	if (res_transfer>0) add_chan_record(ast_channel_name(ast), cid, dest_number, (void *)ast, 0, 0);//mode=0 - transfer call, 0 - aid
-
-//    }
-
-    if (lg) {
-	//stat = ast_channel_state(ast); if (stat > MAX_CHAN_STATE-1) stat=MAX_CHAN_STATE-1;
-	ast_verbose("[%s %s] CallerID=[%s] called=[%s] transfer(%d) to '%s' status=%d (%s)\n",
+    if (go) {
+	if (lg) ast_verbose("[%s %s] CallerID=[%s] called=[%s] transfer(%d) to '%s' status=%d (%s)\n",
 		AST_MODULE, TimeNowPrn(),
 		ast_channel_name(ast),
 		data,
@@ -1570,8 +1574,11 @@ CURLcode er;
 		dest_number,
 		stat,
 		ast_extension_state2str(stat));
-	ast_verbose("[%s %s] application stop.\n", AST_MODULE, TimeNowPrn());
+	res_transfer = ast_transfer(ast, dest_number);
+	if (res_transfer>0) add_chan_record(ast_channel_name(ast), cid, dest_number, (void *)ast, 0, 0);//mode=0 - transfer call, 0 - aid
     }
+
+    if (lg) ast_verbose("[%s %s] application stop.\n", AST_MODULE, TimeNowPrn());
 
     if (buf) free(buf);
 
@@ -1750,7 +1757,8 @@ unsigned char i=0;
 		    if ( (strlen(chan)) && (strlen(uid)) && (strlen(caller)) ) {
 			switch (hangup) {
 			    case 1://used for transfer calls only
-				if (find_chan(chan, caller, exten, 1, uid)) add_event_list(make_chan_event(tp, chan, caller, exten, cs, app));
+				if (find_chan(chan, caller, exten, 1, uid))
+				    add_event_list(make_chan_event(tp, chan, caller, exten, cs, app));
 			    break;
 			    case 2://used for all calls
 				add_event_list(make_chan_event(tp, chan, caller, exten, cs, app));
@@ -2757,7 +2765,7 @@ int act=0, lg = salara_verbose;
     switch (type) {
 	case 0://outgoing call
 	    if (watch_makecall) {
-		sprintf(buf,"%s/%s-XXXXXXXX",StrUpr(Tech),from);
+		sprintf(buf,"%s/%s%s", StrUpr(Tech), from, Obraz);
 		add_chan_record(buf, from, to, NULL, 1, act);//make call, aid
 	    }
 	    sprintf(buf,"Action: Originate\nChannel: %s/%s\nContext: %s\nExten: %s\nPriority: 1\n"
@@ -2975,6 +2983,7 @@ char *ustart=NULL, *uk_body=NULL;
 	    }//while (loop)
 
 	    if (ok) {
+		if (!strlen(cont)) strncpy(cont,context,AST_MAX_EXTENSION-1);
 		if (lg) {
 		    rtype = req_type;
 		    if (rtype >= MAX_ACT_TYPE) rtype=MAX_ACT_TYPE-1;
@@ -3319,10 +3328,9 @@ s_act_list *abc = NULL;
 static void periodics(void *data)
 {
 ////struct ast_tcptls_session_args *desc = data;
-int cnt, lg = salara_verbose;// stat=100;
-//struct ast_channel *ast=NULL;
+int cnt, lg = salara_verbose, stat=-1, cs=-1;
 s_chan_record *tmp=NULL, *rec=NULL;
-//char *name="";
+struct ast_channel *c=NULL;
 
     if (ast_mutex_trylock(&chan_lock)) {
 	if (lg) ast_verbose("[%s %s] Periodics : trylock not success !!!\n", AST_MODULE, TimeNowPrn());
@@ -3331,25 +3339,24 @@ s_chan_record *tmp=NULL, *rec=NULL;
 
     cnt = chan_hdr.counter;
     if (cnt>0) {
-	if (lg) ast_verbose("[%s %s] Periodics : total_records=%d\n", AST_MODULE, TimeNowPrn(), cnt);
+	if (lg>1) ast_verbose("[%s %s] Periodics : total_records=%d\n", AST_MODULE, TimeNowPrn(), cnt);
 	rec = chan_hdr.first;
 	while ((rec) && (cnt>0)) {
-/*	    ast = (struct ast_channel *)rec->ast;
-	    if (ast) {
-		//ast_channel_lock(ast);//!!!
-		stat = ast_channel_state(ast);
-		name = strdupa(ast_channel_name(ast));
-		//ast_channel_unlock(ast);//!!!
-		if (stat > MAX_CHAN_STATE-1) stat=MAX_CHAN_STATE-1;
-		if (lg) ast_verbose("\t -- chan=[%s] state=%d (%s) ast=%p\n", name, stat, ChanStateName[stat], (void *)ast);
-		if ((!strlen(name)) && (dirty)) {
-		    //del_chan_record(rec, 0);
-		    cnt = chan_hdr.counter;
+	    if (!strstr(rec->chan, Obraz)) {
+		c = ast_channel_get_by_name(rec->chan);
+		if (c) {
+		    cs=stat=0;
+		    if (!ast_channel_trylock(c)) {
+			stat = ast_channel_state(c);
+			ast_channel_unlock(c);
+		    }
+		    ast_channel_unref(c);
 		}
-	    } else {*/
-		if (lg) ast_verbose("\t -- chan='%s' exten='%s' caller='%s' uid='%s' aid=%u ast=%p\n",
-					rec->chan, rec->exten, rec->caller, rec->uid, rec->aid, (void *)rec->ast);
-/*	    }*/
+		if (stat<0) del_chan_record(rec, 0);
+	    }
+	    if ((cs<0) || (cs>=MAX_CHAN_STATE)) cs = MAX_CHAN_STATE-1;
+	    if (lg>1) ast_verbose("\t -- chan='%s' exten='%s' caller='%s' uid='%s' aid=%u ast=%p/%p status=%d (%s)\n",
+				rec->chan, rec->exten, rec->caller, rec->uid, rec->aid, (void *)rec->ast, c, stat, ChanStateName[cs]);
 	    tmp = rec->next;
 	    rec = tmp;
 	    cnt--;
@@ -3363,8 +3370,8 @@ static struct ast_tcptls_session_args sami_desc = {
     .accept_fd = -1,
     .master = AST_PTHREADT_NULL,
     .tls_cfg = NULL,
-    .poll_timeout = 5000,	// wake up every 5 seconds
-    .periodic_fn = NULL,//periodics,//purge_old_stuff,
+    .poll_timeout = 10000,	// wake up every 5 seconds
+    .periodic_fn = periodics,//purge_old_stuff,
     .name = "Salara server",
     .accept_fn = srv_nitka,	//tcptls_server_root,	// thread doing the accept()
     .worker_fn = cli_rest_close,//session_do,	// thread handling the session
