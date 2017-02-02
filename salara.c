@@ -51,7 +51,8 @@
 #define AST_MODULE "salara"
 #define AST_MODULE_DESC "Features: transfer call; make call; get status: exten.,peer,channel; send: command,message,post"
 #define DEF_DEST_NUMBER "1234"
-#define SALARA_VERSION "3.6"//02.02.2017
+#define SALARA_VERSION "3.6.2"//02.02.2017
+//"3.6"//02.02.2017
 //"3.5"//31.01.2017
 //"3.4"//30.01.2017
 //"3.3"//26.01.2017
@@ -83,7 +84,6 @@
 #define max_buf_size 4096	//2048
 #define MAX_CHAN_STATE 11
 #define MAX_EVENT_NAME 5
-#define MAX_EVENT_TYPE 4
 #define max_param 3
 //------------------------------------------------------------------------
 
@@ -2138,8 +2138,8 @@ int status;
 //----------------------------------------------------------------------
 static char *cli_salara_get_status_chan(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a)
 {
-int act;
-char *buf=NULL;
+int cs=-1, stat=-1;
+struct ast_channel *ast=NULL;
 
     switch (cmd) {
 	case CLI_INIT:
@@ -2152,29 +2152,19 @@ char *buf=NULL;
 
 	    if (a->argc < 5) return CLI_SHOWUSAGE;
 
-	    buf = (char *)calloc(1, CMD_BUF_LEN);
-	    if (buf) {
-		ast_mutex_lock(&act_lock);
-		    Act_ID++;
-		    act = Act_ID;
-		ast_mutex_unlock(&act_lock);
+	    ast = ast_channel_get_by_name(a->argv[4]);
+	    if (ast) {
+		cs=stat=0;
+		if (!ast_channel_trylock(ast)) {
+		    stat = ast_channel_state(ast);
+		    ast_channel_unlock(ast);
+		}
+		ast_channel_unref(ast);
+		if ((cs<0) || (cs>=MAX_CHAN_STATE)) cs = MAX_CHAN_STATE-1;
+		ast_cli(a->fd, "%s - status is %d (%s)\n", a->argv[4], stat, ChanStateName[cs]);
+	    } else ast_cli(a->fd, "%s - is not a known channel\n", a->argv[4]);
 
-		add_act(act);
-
-		//sprintf(buf,"Action: Status\nChannel: %s\nActionID: %u\n\n", a->argv[4], act);// !!! <- BAD !!!
-		sprintf(buf,"Action: Command\nCommand: core show channel %s\nActionID: %u\n\n",a->argv[4],act);
-		ast_cli(a->fd, "%s", buf);
-		console=1;
-		msg_send(buf);
-		console=0;
-
-		usleep(1000);
-		s_act_list *abc = find_act(act);
-		if (abc) delete_act(abc,1);
-		free(buf);
-
-		return CLI_SUCCESS;
-	    }
+	    return CLI_SUCCESS;
 	break;
     }
 
@@ -2753,7 +2743,7 @@ static int MakeAction(int type, char *from, char *to, char *mess, char *ctext)
 char buf[512]={0};
 int act=0, lg = salara_verbose;
 
-    if ((type < 0) || (type >= MAX_EVENT_TYPE)) return 0;
+    if ((type < 0) || (type > 2)) return 0;
 
     ast_mutex_lock(&act_lock);
 	Act_ID++;
@@ -2782,15 +2772,6 @@ int act=0, lg = salara_verbose;
 	break;
 	case 2://peer status
 	    sprintf(buf,"Action: SIPpeerstatus\nActionID: %u\nPeer: %s\n\n", act, from);
-	break;
-	case 3://channel status
-	    /*
-	    Action: Status
-	    Channel: SIP/8003-00000001
-	    ActionID: 1
-	    */
-	    //sprintf(buf,"Action: Status\nChannel: %s\nActionID: %u\n\n", from, act);
-	    sprintf(buf,"Action: Command\nCommand: core show channel %s\nActionID: %u\n\n",from,act);
 	break;
     }
 
@@ -2823,6 +2804,7 @@ char ack_text[SIZE_OF_RESP]={0};
 char tp[8]={0};
 unsigned char ok=0, post_flag=0, two=0;
 char *ustart=NULL, *uk_body=NULL;
+struct ast_channel *ast=NULL;
 
 
     buf = (char *)calloc(1,MAX_ANSWER_LEN);
@@ -3013,7 +2995,6 @@ char *ustart=NULL, *uk_body=NULL;
 			}
 		    break;
 		    case 2://"Get status peer"
-		    case 3://"Get status channel"
 			aid = MakeAction(req_type,operator,phone,msg,cont);//get status peer, channel
 			usleep(2000);
 			if (aid>0) {
@@ -3026,6 +3007,20 @@ char *ustart=NULL, *uk_body=NULL;
 			} else {
 			    sprintf(ack_text,"%s", answer_bad);
 			}
+			done=1;
+		    break;
+		    case 3://"Get status channel"
+			ast = ast_channel_get_by_name(operator);
+			if (ast) {
+			    stat=0;
+			    if (!ast_channel_trylock(ast)) {
+				stat = ast_channel_state(ast);
+				ast_channel_unlock(ast);
+			    }
+			    ast_channel_unref(ast);
+			    if ((stat<0) || (stat>=MAX_CHAN_STATE)) stat = MAX_CHAN_STATE-1;
+			    strcpy(ack_text, ChanStateName[stat]);
+			} else sprintf(ack_text, "Channel not present");
 			done=1;
 		    break;
 			default : { sprintf(ack_text,"%s", answer_bad); stat=-2; }
