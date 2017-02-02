@@ -2674,6 +2674,7 @@ s_route_record *rt=NULL, *nx=NULL;
     if (!strlen(rest_server)) strcpy(rest_server, DEFAULT_SRV_ADDR);
     len += fprintf(fp, "rest_server=%s\n", rest_server);
     len += fprintf(fp, "dest_url=%s\n", dest_url);
+    len += fprintf(fp, ";dest_url=https://Alarm:3000/phone\n");
     len += fprintf(fp, ";dest_url=https://Alarm:3000/call_center/incoming_call/check_is_org_only?phone=\n");
     len += fprintf(fp, "dest_url_event=%s\n", dest_url_event);
     len += fprintf(fp, "good_status=0,4\n");
