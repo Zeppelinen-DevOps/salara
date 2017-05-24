@@ -1,8 +1,17 @@
-###########################################################################################
+####################################################################
 #
-# 			salara - Asterisk rest api module
+# 			salara - Asterisk REST API module
 #
-###########################################################################################
+####################################################################
+
+##Description
+
+A simple module for Asterisk PBX that provides two main features:
+1. Built-in HTTP REST API that accepts incoming connections and manages calls accordingly.
+2. Built-in HTTP REST client that can connect to external REST API and manage incoming calls according to REST responses.
+
+It is easily customizable and can serve as a base for integration of existing Asterisk installations with external data sources, like CRMs, databases or any other application with REST interface.
+
 
 ## Package files:
 
