@@ -1,3 +1,16 @@
+/*
+ * salara -- An open source REST API module for Asterisk.
+ *
+ * Copyright (C) 2016 - 2017, Zeppelinen Development And Operations Support LLP
+ *
+ * Alex Ilminsky <ilminsky.a@zeppelinen.com>
+ *
+ * This program is free software, distributed under the terms of
+ * the GNU General Public License Version 3. See the LICENSE file
+ * at the top of the source tree.
+ *
+*/
+
 #include <ctype.h>
 #include <netdb.h>
 #include <jansson.h>
@@ -52,25 +65,6 @@
 #define AST_MODULE_DESC "Features: transfer call; make call; get status: exten.,peer,channel; send: command,message,post"
 #define DEF_DEST_NUMBER "1234"
 #define SALARA_VERSION "3.6.2"//02.02.2017
-//"3.6"//02.02.2017
-//"3.5"//31.01.2017
-//"3.4"//30.01.2017
-//"3.3"//26.01.2017
-//"3.1"//20.01.2017
-//"3.0"//26.12.2016
-//"2.9"//23.12.2016
-//"2.8"//22.12.2016
-//"2.7"//21.12.2016
-//"2.6"//20.12.2016
-//"2.5"//18.12.2016
-//"2.4"//17.12.2016
-//"2.3"//16.12.2016
-//"2.2"//14.12.2016
-//"2.1"//12.12.2016
-//"2.0"//10.12.2016
-//"1.9"//09.12.2016
-//"1.8"//09.12.2016
-//"1.7"//08.12.2016
 //"1.6"//07.12.2016
 
 #define DEF_SALARA_CURLOPT_TIMEOUT 3
