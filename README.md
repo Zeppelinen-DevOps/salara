@@ -4,43 +4,43 @@
 #
 ###########################################################################################
 
-## Файлы пакета:
+## Package files:
 
-* salara.conf	- файл конфигурации модуля
+* salara.conf	- module configuration file
 
-* Makefile	- make файл (файл сценария компиляции модуля)
+* Makefile	- make файл (module compilation scenario)
 
-* salara.c	- source (исходник модуля)
+* salara.c	- source (module source code)
 
-Имя файла модуля - salara.so
+Module name - salara.so
 
-Требуемые заголовочные файлы (Required headers):
+Required headers:
 ```
-- asterisk headers files (из пакета asterisk)
-- libcurl headers files (из пакета devel)
-- libjansson headers files (из пакета devel)
+- asterisk headers files (asterisk package)
+- libcurl headers files (libcurl-devel)
+- libjansson headers files (libjansson-devel)
 ```
-Требуемые библиотеки (Required library):
+Required libraries:
 ```
 - libcurl.so.4 or high (https://curl.haxx.se/download.html)
 - libjansson.so.4 or high (http://www.digip.org/jansson/)
 ```
 
-## Компиляция и установка модуля
+## Compilation and installation
 
 make
 
-Скопировать файлы :
+Copy files :
 
-* salara.so	в папку /usr/lib/asterisk/modules/	(папка с модулями asterisk)
+* salara.so	to directory /usr/lib/asterisk/modules/	(or other asterisk module directory)
 
-* salara.conf	в папку /etc/asterisk/			(папка с файлами конфигурации asterisk)
+* salara.conf	to directory /etc/asterisk/			(asterisk confifuration directory)
 
-Загрузка модуля с консоли asterisk:
+Load module via asterisk CLI:
 ```
 module load salara.so
 ```
-При успешной загрузке в консоли появится примерно следубщее сообщение:
+The following message will be shown in the console:
 ```
 Loaded salara.so
   == Registered application 'salara'
@@ -48,18 +48,18 @@ Loaded salara.so
 [salara 14:13:56.141] SEND_BY_EVENT Thread started (tid:2886441792).
 ```
 
-Получить список консольных команд модуля:
+Get available module commands:
 ```
 core show help salara
 ```
 
 
-# Функции модуля
+# Module features
 
 
-## 1. POST запросы к модулю salara (на порт 5058) в формате json
+## 1. Direct HTTP JSON POST messages to salara module (port 5058)
 
-### 1.1 Создать соединение (make call) между двум абонентами :
+### 1.1 Setup a call between two subscribers:
 ```
 {
     "operator": "8003",
@@ -67,134 +67,134 @@ core show help salara
     "context": "alnik"
 }
 ```
-где,
-* "operator" - внутренный абонент (caller) - обязательное поле
-* "phone" - внешний или внутренний абонент (called) - обязательное поле
-* "context" - контекст абонента caller - не обязательное поле
+where,
+* "operator" - calling party (caller) - required
+* "phone" -  called party, external or internal (called) - required
+* "context" - caller context - optional
 
-Алгоритм поведения модуля :
-*  проверяется статус абонента caller, если статус удовлетворительный - делается вызов на этого абонента;
-*  после ответа абонента caller, вызывается абонент called.
+Module algorithm :
+*  Check the caller status, if ok caller call leg is established;
+*  after caller party answers, called party leg is established.
 
-Ответ модуля на такой запрос имеет следующий вид :
+Example of module response to this request:
 ```
 {"result":0,"text":"Idle"}
 ```
-где,
-* "result" - содержит статус абонента caller
-* "text" - текстовая интерпретация статуса абонента caller.
+where,
+* "result" - caller party status code
+* "text" - caller party status text.
 
-### 1.2 Послать текстовое сообщение (msg send) внутреннему абоненту :
+### 1.2 Send text message to internal subscriber :
 ```
 {
     "operator": "8003",
     "phone": "8002",
-    "msg": "текст сообщения",
+    "msg": "Message text",
     "context": "general"
 }
 ```
-где,
-* "operator" - получатель сообщения, абонент, которому посылается сообщение - обязательное поле
-* "phone" - отправител, абонент, от имени которого посылается сообщение - обязательное поле
-* "msg" - текст сообщения -обязательное поле
-* "context" - контекст получателя - не обязательное поле
+where,
+* "operator" - message recipient, the subscriber who receives the message - required
+* "phone" - sender, the subscriber, who sends the message - required 
+* "msg" - message text - required 
+* "context" - recipient context - optional 
 
-Алгоритм поведения модуля :
-  - проверяется статус получателя, если статус удовлетворительный - отправляется сообщение
+Module algorithm :
+  - check the operator status, if ok - send the message
 
-Ответ модуля на такой запрос имеет следующий вид :
+Example of module response to this request :
 ```
 {"result":0,"text":"Idle"}
 ```
-где,
-* "result" - содержит статус получателя
-* "text" - текстовая интерпретация статуса получателя.
+where,
+* "result" - operator status code
+* "text" - operator status text.
 
-### 1.3 Запрос статуса внутреннего абонента (extension) :
+### 1.3 query status of extension subscriber (extension) :
 ```
 {
     "exten": "8003",
     "context": "alnik"
 }
 ```
-где,
-* "exten" - внутренний абонент, статус которого запрашивается - обязательное поле
-* "context" - контекст внутреннего абонента - не обязательное поле
+where,
+* "exten" - extension subscriber, which status is required- required
+* "context" - exten context- optional
 
-Ответ модуля на такой запрос имеет следующий вид :
+Example of module response to this request :
 ```
-{"result":0,"text":"Idle"} - абонент доступен
-{"result":4,"text":"Unavailable"} - абонент не доступен
-{"result":-1,"text":"Unknown"} - абоненте отсутствует в плане нумерации
+{"result":0,"text":"Idle"} - available
+{"result":4,"text":"Unavailable"} - unavailable
+{"result":-1,"text":"Unknown"} - error in numbering plan
 ```
 
-### 1.4 Запрос статуса пира (peer) :
+### 1.4 query peer status (peer) :
 ```
 {
     "peer": "8003",
     "context": "alnik"
 }
 ```
-где,
-* "peer" - пир, статус которого запрашивается - обязательное поле
-* "context" - контекст пира - не обязательное поле
+where,
+* "peer" - peer, which status is required - required
+* "context" - peer context - optional
 
-Ответ модуля на такой запрос имеет следующий вид :
+Example of module response to this request :
 ```
-{"result":0,"text":"Reachable"} - peer доступен
-{"result":0,"text":"Unknown"} - peer не доступен
-{"result":-1,"text":"Error"} - peer отсутствует в плане нумерации
+{"result":0,"text":"Reachable"} - available
+{"result":0,"text":"Unknown"} - unavailable
+{"result":-1,"text":"Error"} - error in numbering plan
 ```
 
-### 1.5 Запрос статуса канала (channel) :
+### 1.5 query channel status (channel) :
 ```
 {
     "chan": "SIP/8003-00000020"
 }
 ```
-где,
-* "chan" - канал, статус которого запрашивается - обязательное поле
+where,
+* "chan" - channel, which status is required - required
 
-Ответ модуля на такой запрос имеет следующий вид :
+Example of module response to this request :
 ```
-{"result":-1,"text":"Channel not present"} - канал отсутствует
-{"result":0,"text":"Up (6)"} - канал присутствует (живой), в состоянии разговора
+{"result":-1,"text":"Channel not present"} - the channel is not present
+{"result":0,"text":"Up (6)"} - the channel is present (live) 
 ```
 
-## 2. POST запросы, посылаемые модулем стороннему вэб-серверу (CRM) в формате json
+## 2. POST  requests, sent by the module to a third-party web server (CRM, or any other source of call management data) in JSON format
 
-Запросы формируются по следующим событиям (events) :
+Requests are created on the following events (events) :
 
-### 2.1 "Newchannel" - создан новый канал (для вызовов, прошедших через функцию Transfer модуля)
-на сервер (CRM) посылается примерно такой запрос :
+### 2.1 "Newchannel" - a new channel is created (for the calls, passed through the Transfer function of the module)
+Example of (CRM) request : 
 ```
 {"event":"Newchannel","chan":"SIP/8003-00000022","caller":"8003","exten":"0000","state":"DOWN"}
 ```
-сервер (CRM) должен прислать ответ примерно такого вида :
+Example of HTTP response to this request :
 ```
 {"result":0}
 ```
 
-### 2.2 "Hangup" - канал прекратил своё существование (для вызовов, прошедших через функцию Transfer модуля)
-на сервер (CRM) посылается примерно такой запрос :
+### 2.2 "Hangup" - the channel ceased functioning (for the calls, passed through the Transfer function of the module)
+Example of (CRM) request :
 ```
 {"event":"Hangup","chan":"SIP/8003-00000022","caller":"8003","exten":"0000","state":"UP"}
 ```
-сервер (CRM) должен прислать ответ примерно такого вида :
+Example of HTTP response to this request  :
 ```
 {"result":0}
 ```
 
-### 2.3 "Newexten" - статус абонента caller изменился(для вызовов, прошедших через функцию Transfer модуля или для всех вызовов)
-на сервер (CRM) посылается примерно такой запрос :
+### 2.3 "Newexten" - the caller status is changed (for the calls, passed through the Transfer function of the module)
+Example of HTTP request :
 ```
-{"event":"Newexten","chan":"SIP/8003-00000023","caller":"8003","exten":"0000","state":"RING"} - вызов на номер "0000"
+{"event":"Newexten","chan":"SIP/8003-00000023","caller":"8003","exten":"0000","state":"RING"} - call the number "0000"
 ```
-или такой
+or
 ```
-{"event":"Newexten","chan":"SIP/8003-00000023","caller":"8003","exten":"0000","state":"UP","app":"Playback"} - соединение с номером "0000"
+{"event":"Newexten","chan":"SIP/8003-00000023","caller":"8003","exten":"0000","state":"UP","app":"Playback"} - connect the number "0000" 
 ```
-сервер (CRM) должен прислать ответ примерно такого вида :
+Example of HTTP response to this request  :
 ```
 {"result":0}
 ```
