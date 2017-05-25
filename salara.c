@@ -173,6 +173,7 @@ static int timeout_makecall = 10;
 static unsigned char newchannel = 0;
 static unsigned char hangup = 0;
 static unsigned char newexten = 0;
+static unsigned char agentcon = 0;
 static unsigned char console = 0;
 static unsigned char dirty=0;//clear lost chan_records
 static unsigned char start_http_nitka = 0;
@@ -238,12 +239,17 @@ static const char *S_StatusText ="StatusText:";
 static const char *S_Success = "Success";
 static const char *S_PeerStatus = "PeerStatus:";
 static const char *S_Channel = "Channel:";
-static const char *S_Exten = "Exten:";
-static const char *S_Extension = "Extension:";
 static const char *S_CallerIDNum = "CallerIDNum:";
 static const char *S_ChannelState = "ChannelState:";
+static const char *S_DestChannel = "DestChannel:";
+static const char *S_DestCallerIDNum = "DestCallerIDNum:";
+static const char *S_DestChannelState = "DestChannelState:";
+static const char *S_Exten = "Exten:";
+static const char *S_DestExten = "DestExten:";
+static const char *S_Extension = "Extension:";
 static const char *S_Application ="Application:";
 static const char *S_Uninqueid ="Uniqueid:";
+static const char *S_DestUninqueid ="DestUniqueid:";
 static const char *SA_Error ="Error";
 
 static const char *ChanStateName[MAX_CHAN_STATE] = {
@@ -1583,6 +1589,7 @@ static int hook_callback(int category, const char *event, char *body)
 {
 int lg, id=-1, sti=-1, done=0, dl, rdy=0, tp=-1;
 char *uk=NULL, *uk2=NULL;
+const char *uki=NULL;
 char stx[SIZE_OF_RESP]={0};
 unsigned char i=0;
 
@@ -1679,6 +1686,7 @@ unsigned char i=0;
 	    case 1://Hangup
 	    case 2://Newchannel
 	    case 3://Newexten
+	    case 4://AgentConnect
 		if (lg>2) ast_verbose("%s",hook_tmp_str);
 		int cs = MAX_CHAN_STATE-1;
 		char chan[AST_CHANNEL_NAME]; char exten[AST_MAX_EXTENSION]; char uid[AST_MAX_PUBLIC_UNIQUEID];
@@ -1686,6 +1694,7 @@ unsigned char i=0;
 		memset(chan,0,AST_CHANNEL_NAME); memset(exten,0,AST_MAX_EXTENSION);
 		memset(caller,0,AST_MAX_EXTENSION); memset(chan_state,0,AST_MAX_EXTENSION);
 		memset(uid,0,AST_MAX_PUBLIC_UNIQUEID); memset(app,0,AST_MAX_EXTENSION);
+		
 		uk = strstr(hook_tmp_str, S_Channel);
 		if (uk) {
 		    uk += strlen(S_Channel); if (*uk == ' ') uk++; uk2 = strstr(uk,"\r\n");
@@ -1695,9 +1704,11 @@ unsigned char i=0;
 		    }
 		}
 		uk2=NULL;
-		uk = strstr(hook_tmp_str, S_Exten);
+
+		if (tp == 4) uki = S_DestExten; else uki = S_Exten;
+		uk = strstr(hook_tmp_str, uki);//S_Exten);
 		if (uk) {
-		    uk += strlen(S_Exten); if (*uk == ' ') uk++; uk2 = strstr(uk,"\r\n");
+		    uk += strlen(uki); if (*uk == ' ') uk++; uk2 = strstr(uk,"\r\n");
 		} else {
 		    uk = strstr(hook_tmp_str, S_Extension);
 		    if (uk) {
@@ -1717,25 +1728,47 @@ unsigned char i=0;
 			memcpy(caller, uk, dl);
 		    }
 		}
-		uk = strstr(hook_tmp_str, S_ChannelState);
+
+		if (tp == 4) uki = S_DestChannelState; else uki = S_ChannelState;
+		uk = strstr(hook_tmp_str, uki);
 		if (uk) {
-		    uk += strlen(S_ChannelState); if (*uk == ' ') uk++; uk2 = strstr(uk,"\r\n");
+		    uk += strlen(uki); if (*uk == ' ') uk++; uk2 = strstr(uk,"\r\n");
 		    if (uk2) {
 			dl = uk2 - uk; if (dl >= AST_MAX_EXTENSION) dl=AST_MAX_EXTENSION-1;
-			memcpy(chan_state, uk, dl); cs = atoi(chan_state);
+			memcpy(chan_state, uk, dl);
+			cs = atoi(chan_state);
 		    }
 		}
-		uk = strstr(hook_tmp_str, S_Application);
+
+		if (tp == 4) uki = S_DestChannel; else uki = S_Application;
+		uk = strstr(hook_tmp_str, uki);
 		if (uk) {
-		    uk += strlen(S_Application); if (*uk == ' ') uk++; uk2 = strstr(uk,"\r\n");
+		    uk += strlen(uki); if (*uk == ' ') uk++; uk2 = strstr(uk,"\r\n");
 		    if (uk2) {
-			dl = uk2 - uk; if (dl >= AST_MAX_EXTENSION) dl=AST_MAX_EXTENSION-1;
+			dl = uk2 - uk; if (dl >= AST_MAX_EXTENSION) dl = AST_MAX_EXTENSION - 1;
 			memcpy(app, uk, dl);
+			if (tp==4) {//AgentConnect -> get agent number from 'DestChannel' (Local/1111@alnik-00000010;1)
+			    uk2 = strchr(app, '@'); if (uk2) *uk2 = '\0';
+			    uk2 = strchr(app, '/');
+			    if (uk2) {
+				uk = uk2+1;
+				uk2 = strchr(app, '\0');
+				if (uk2) {
+				    dl = uk2 - uk;
+				    if (dl>0) {
+					memcpy(app, uk, dl);
+					app[dl]='\0';
+				    }
+				}
+			    }
+			}
 		    }
 		}
-		uk = strstr(hook_tmp_str, S_Uninqueid);
+
+		uki = S_Uninqueid;
+		uk = strstr(hook_tmp_str, uki);
 		if (uk) {
-		    uk += strlen(S_Uninqueid); if (*uk == ' ') uk++; uk2 = strstr(uk,"\r\n");
+		    uk += strlen(uki); if (*uk == ' ') uk++; uk2 = strstr(uk,"\r\n");
 		    if (uk2) {
 			dl = uk2 - uk; if (dl >= AST_MAX_PUBLIC_UNIQUEID) dl=AST_MAX_PUBLIC_UNIQUEID-1;
 			memcpy(uid, uk, dl);
@@ -1760,7 +1793,6 @@ unsigned char i=0;
 			}
 		    }
 		} else if (tp==2) {//Newchannel
-//if (lg) ast_verbose("[%s %s] event='%s' body=[\n%s]\n",AST_MODULE,TimeNowPrn(),event,hook_tmp_str);
 		    if ( (strlen(chan)) && (strlen(exten)) && (strlen(caller)) ) {
 			update_chan(chan, caller, exten, uid);
 			switch (newchannel) {
@@ -1791,10 +1823,25 @@ unsigned char i=0;
 			    break;
 			}
 		    }
+		} else if (tp==4) {//AgentConnect
+		    if ( (strlen(chan)) && (strlen(exten)) && (strlen(caller)) ) {
+			switch (agentcon) {
+			    case 1://used for transfer call with status UP
+				if (cs==6) {//when state=UP
+				    if (find_chan(chan, caller, exten, 0, uid))//when find caller:exten in chan_list
+					add_event_list(make_chan_event(tp, chan, caller, exten, cs, app));
+				}
+			    break;
+			    case 2://used for transfer call with all status
+				if (find_chan(chan, caller, exten, 0, uid))//when find caller:exten in chan_list
+					add_event_list(make_chan_event(tp, chan, caller, exten, cs, app));
+			    break;
+			    case 3://used for all call with all status
+				add_event_list(make_chan_event(tp, chan, caller, exten, cs, app));
+			    break;
+			}
+		    }
 		}
-	    break;
-	    case 4://AgentConnect
-		if (lg) ast_verbose("%s",hook_tmp_str);
 	    break;
 		default : if (lg) ast_verbose("[%s %s] Unknown event='%s' body=[\n%s]\n",AST_MODULE,TimeNowPrn(),event,hook_tmp_str);
 	}//switch
@@ -1869,6 +1916,13 @@ unsigned char i;
 		default : ast_cli(a->fd, " (not used)\n");
 	}
 	ast_cli(a->fd, "\t-- Newexten event: %d", newexten);
+	switch (newexten) {
+	    case 1: ast_cli(a->fd, " (used for transfer call with status UP)\n"); break;
+	    case 2: ast_cli(a->fd, " (used for transfer call with all status)\n"); break;
+	    case 3: ast_cli(a->fd, " (used for all call with all status)\n"); break;
+		default : ast_cli(a->fd, " (not used)\n");
+	}
+	ast_cli(a->fd, "\t-- AgentConnect event: %d", agentcon);
 	switch (newexten) {
 	    case 1: ast_cli(a->fd, " (used for transfer call with status UP)\n"); break;
 	    case 2: ast_cli(a->fd, " (used for transfer call with all status)\n"); break;
@@ -2538,23 +2592,32 @@ char *_begin=NULL, *uk=NULL, *uki=NULL, *uks=NULL;
 												uki += 7;
 												verb = atoi(uki);
 												if ((verb>=0) && (verb<=2)) hangup = verb;
-											    } else {
-												uki = strstr(buf,"watch_makecall=");
+											    } else {//
+												uki = strstr(buf,"agentcon=");
 												if (uki) {
-												    //ast_verbose("\tread_config: watch_makecall:%s\n",buf);
+												    //ast_verbose("\tread_config: agentcon:%s\n",buf);
 												    uks = strchr(buf,'\n'); if (uks) *uks = '\0';
-												    uki += 15;
-												    w_mc = atoi(uki);
+												    uki += 9;
+												    verb = atoi(uki);
+												    if ((verb>=0) && (verb<=2)) agentcon = verb;
 												} else {
-												    uki = strstr(buf,"timeout_makecall=");
+												    uki = strstr(buf,"watch_makecall=");
 												    if (uki) {
-													//ast_verbose("\tread_config: timeout_makecall:%s\n",buf);
+													//ast_verbose("\tread_config: watch_makecall:%s\n",buf);
 													uks = strchr(buf,'\n'); if (uks) *uks = '\0';
-													uki += 17;
-													t_mc = atoi(uki);
+													uki += 15;
+													w_mc = atoi(uki);
+												    } else {
+													uki = strstr(buf,"timeout_makecall=");
+													if (uki) {
+													    //ast_verbose("\tread_config: timeout_makecall:%s\n",buf);
+													    uks = strchr(buf,'\n'); if (uks) *uks = '\0';
+													    uki += 17;
+													    t_mc = atoi(uki);
+													}
 												    }
 												}
-											    }
+											    }//
 											}
 										    }
 										}
@@ -2659,6 +2722,11 @@ s_route_record *rt=NULL, *nx=NULL;
 			";2 - used for all calls\n");
     len += fprintf(fp, "newexten=%d\n", newexten);
     len += fprintf(fp,  ";0 - not used 'Newexten' type event\n"\
+			";1 - used for transfer call with status UP\n"\
+			";2 - used for transfer call with all status\n"\
+			";3 - used for all calls with all status\n");
+    len += fprintf(fp, "agentcon=%d\n", agentcon);
+    len += fprintf(fp,  ";0 - not used 'AgentConnect' type event\n"\
 			";1 - used for transfer call with status UP\n"\
 			";2 - used for transfer call with all status\n"\
 			";3 - used for all calls with all status\n");
@@ -3202,10 +3270,20 @@ char buf[MAX_ANSWER_LEN]={0};
     json_object_set_new(js,"event", json_string(EventName[tp]));
     if (evt->chan) json_object_set_new(js,"chan", json_string(evt->chan));
     if (evt->caller) json_object_set_new(js,"caller", json_string(evt->caller));
-    if (evt->exten) json_object_set_new(js,"exten", json_string(evt->exten));
+    if (evt->exten) {
+	if (tp == 4)//AgentConnect
+	    json_object_set_new(js,"queue", json_string(evt->exten));
+	else
+	    json_object_set_new(js,"exten", json_string(evt->exten));
+    }
     json_object_set_new(js,"state", json_string(ChanStateName[ts]));
     if (evt->app) {
-	if (strlen(evt->app)) json_object_set_new(js,"app", json_string(evt->app));
+	if (strlen(evt->app)) {
+	    if (tp == 4)//AgentConnect
+		json_object_set_new(js,"agent", json_string(evt->app));
+	    else
+		json_object_set_new(js,"app", json_string(evt->app));
+	}
     }
 
     jbody = json_dumps(js, JSON_COMPACT);

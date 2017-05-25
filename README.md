@@ -17,7 +17,7 @@ It is easily customizable and can serve as a base for integration of existing As
 
 * salara.conf	- module configuration file
 
-* Makefile	- make файл (module compilation scenario)
+* Makefile	- make file (module compilation scenario)
 
 * salara.c	- source (module source code)
 
@@ -43,7 +43,7 @@ Copy files :
 
 * salara.so	to directory /usr/lib/asterisk/modules/	(or other asterisk module directory)
 
-* salara.conf	to directory /etc/asterisk/			(asterisk confifuration directory)
+* salara.conf	to directory /etc/asterisk/		(asterisk confifuration directory)
 
 Load module via asterisk CLI:
 ```
@@ -208,3 +208,12 @@ Example of HTTP response to this request  :
 {"result":0}
 ```
 
+### 2.4 "AgentConnect" - the agent answered a call from queue(for the calls, passed through the Transfer function of the module)
+Example of HTTP request :
+```
+{"event":"AgentConnect","chan":"SIP/8003-00000025","caller":"8003","queue":"710","state":"UP","agent":"2222"} - соединение с номером "2222"
+```
+Example of HTTP response to this request  :
+```
+{"result":0}
+```
