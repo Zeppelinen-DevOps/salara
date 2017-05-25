@@ -211,7 +211,7 @@ Example of HTTP response to this request  :
 ### 2.4 "AgentConnect" - the agent answered a call from queue(for the calls, passed through the Transfer function of the module)
 Example of HTTP request :
 ```
-{"event":"AgentConnect","chan":"SIP/8003-00000025","caller":"8003","queue":"710","state":"UP","agent":"2222"} - соединение с номером "2222"
+{"event":"AgentConnect","chan":"SIP/8003-00000025","caller":"8003","queue":"710","state":"UP","agent":"2222"} - connect the number "2222"
 ```
 Example of HTTP response to this request  :
 ```
